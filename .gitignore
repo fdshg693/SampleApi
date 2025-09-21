@@ -1,0 +1,117 @@
+# .gitignore for .NET / Visual Studio / VS Code
+# Source: based on GitHub’s official VisualStudio.gitignore with a few practical additions
+
+###############
+# Build output
+###############
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+
+###############
+# Visual Studio
+###############
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+################
+# VS Code
+################
+# Keep common project config files, ignore the rest
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+################
+# Rider / JetBrains
+################
+.idea/
+*.sln.iml
+*.DotSettings.user
+
+################
+# NuGet
+################
+*.nupkg
+# Legacy packages folder (NuGet 2.x)
+packages/
+!packages/build/
+!packages/repositories.config
+.nuget/NuGet.Config
+.nuget/NuGet.exe
+.nuget/packages.config
+
+################
+# Test results / coverage
+################
+[Tt]est[Rr]esult*/
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+
+################
+# Azure / publish
+################
+PublishProfiles/
+app.publish/
+*.pubxml
+*.pubxml.user
+
+################
+# MSBuild / tooling
+################
+*.csproj.user
+*.dbmdl
+*.publishsettings
+*.builds
+
+################
+# Cache / misc
+################
+*.ipch
+*.cache
+*.tmp
+*.temp
+*.tlog
+
+################
+# Debugging
+################
+*.pdb
+*.mdb
+
+################
+# Database / local state (uncomment if applicable)
+################
+# *.mdf
+# *.ldf
+# *.ndf
+
+################
+# OS-specific
+################
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+################
+# ASP.NET scaffolding
+################
+ScaffoldingReadMe.txt
+
+################
+# Optional: local-only config (uncomment if you don’t want these tracked)
+################
+# appsettings.Development.json
+# Properties/launchSettings.json
