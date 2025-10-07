@@ -1,0 +1,101 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { sendChat, type ChatMessage, health } from '$lib/api';
+
+	let messages: ChatMessage[] = [];
+	let input = '';
+	let loading = false;
+	let error: string | null = null;
+	let isStub = false;
+
+	onMount(async () => {
+		try {
+			const h = await health();
+			console.log('Health', h);
+		} catch (e) {
+			error = 'Backend is not reachable. Start the API server.';
+		}
+	});
+
+	async function send() {
+		if (!input.trim() || loading) return;
+		error = null;
+		loading = true;
+		const controller = new AbortController();
+		const userMsg: ChatMessage = { role: 'user', content: input.trim() };
+		messages = [...messages, userMsg];
+		input = '';
+		try {
+			const res = await sendChat({ messages });
+			messages = [...messages, { role: 'assistant', content: res.reply }];
+			isStub = res.isStub;
+		} catch (e: any) {
+			error = e?.message ?? 'Failed to send message';
+		} finally {
+			loading = false;
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>Chat</title>
+</svelte:head>
+
+<div class="app">
+	<header>
+		<h1>AI Chat</h1>
+		{#if isStub}
+			<span class="tag">stub</span>
+		{/if}
+	</header>
+
+	<section class="chat">
+		{#if messages.length === 0}
+			<p class="empty">Ask me anything to get started.</p>
+		{/if}
+		{#each messages as m, i}
+			<div class={`msg ${m.role}`}>
+				<div class="bubble">{m.content}</div>
+			</div>
+		{/each}
+	</section>
+
+	{#if error}
+		<div class="error">{error}</div>
+	{/if}
+
+	<form class="input" on:submit|preventDefault={send}>
+		<input
+			placeholder="Type a message..."
+			bind:value={input}
+			autocomplete="off"
+		/>
+		<button disabled={loading || !input.trim()}>{loading ? 'Sending…' : 'Send'}</button>
+	</form>
+</div>
+
+<style>
+	:global(body) {
+		margin: 0;
+		font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+		background: #0b1120;
+		color: #e5e7eb;
+	}
+	.app { max-width: 900px; margin: 0 auto; padding: 1rem; }
+	header { display: flex; align-items: center; gap: .5rem; }
+	header h1 { font-size: 1.25rem; margin: 0; }
+	.tag { font-size: .75rem; padding: .125rem .4rem; border: 1px solid #4b5563; border-radius: 4px; color: #9ca3af; }
+	.chat { display: grid; gap: .5rem; margin: 1rem 0; }
+	.msg { display: flex; }
+	.msg.user { justify-content: flex-end; }
+	.msg.assistant { justify-content: flex-start; }
+	.bubble { max-width: 80%; padding: .6rem .75rem; border-radius: 10px; line-height: 1.35; white-space: pre-wrap; }
+	.msg.user .bubble { background: #1f2937; }
+	.msg.assistant .bubble { background: #111827; border: 1px solid #374151; }
+	.empty { opacity: .7; }
+	.input { display: flex; gap: .5rem; }
+	.input input { flex: 1; padding: .6rem .75rem; border-radius: 8px; border: 1px solid #374151; background: #0f172a; color: #e5e7eb; }
+	.input button { padding: .6rem .9rem; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #e5e7eb; cursor: pointer; }
+	.input button[disabled] { opacity: .6; cursor: not-allowed; }
+	.error { color: #fecaca; background: #7f1d1d; border: 1px solid #991b1b; padding: .5rem .75rem; border-radius: 8px; }
+</style>
