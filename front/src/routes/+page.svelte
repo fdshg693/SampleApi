@@ -43,10 +43,15 @@
 
 <div class="app">
 	<header>
-		<h1>AI Chat</h1>
-		{#if isStub}
-			<span class="tag">stub</span>
-		{/if}
+		<div class="header-content">
+			<div class="title-section">
+				<h1>AI Chat</h1>
+				{#if isStub}
+					<span class="tag">stub</span>
+				{/if}
+			</div>
+			<a href="/todos" class="nav-link">📝 TODOs</a>
+		</div>
 	</header>
 
 	<section class="chat">
@@ -82,9 +87,13 @@
 		color: #e5e7eb;
 	}
 	.app { max-width: 900px; margin: 0 auto; padding: 1rem; }
-	header { display: flex; align-items: center; gap: .5rem; }
+	header { margin-bottom: 1rem; }
+	.header-content { display: flex; align-items: center; justify-content: space-between; }
+	.title-section { display: flex; align-items: center; gap: .5rem; }
 	header h1 { font-size: 1.25rem; margin: 0; }
 	.tag { font-size: .75rem; padding: .125rem .4rem; border: 1px solid #4b5563; border-radius: 4px; color: #9ca3af; }
+	.nav-link { color: #60a5fa; text-decoration: none; padding: .5rem .75rem; border-radius: 8px; border: 1px solid #374151; background: #1f2937; transition: all 0.2s; }
+	.nav-link:hover { background: #374151; }
 	.chat { display: grid; gap: .5rem; margin: 1rem 0; }
 	.msg { display: flex; }
 	.msg.user { justify-content: flex-end; }

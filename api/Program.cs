@@ -25,6 +25,9 @@ builder.Services.AddHttpClient();
 // AI chat service
 builder.Services.AddSingleton<AiChatService>();
 
+// TODO service
+builder.Services.AddSingleton<TodoService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -54,6 +57,76 @@ app.MapPost("/api/chat", async (ChatRequest request, AiChatService ai, Cancellat
     return Results.Ok(response);
 })
 .WithName("Chat")
+.WithOpenApi();
+
+// TODO endpoints
+// GET /api/todos - 全TODO取得
+app.MapGet("/api/todos", async (TodoService todoService, CancellationToken ct) =>
+{
+    var response = await todoService.GetAllAsync(ct);
+    return Results.Ok(response);
+})
+.WithName("GetTodos")
+.WithOpenApi();
+
+// POST /api/todos - 新規TODO作成
+app.MapPost("/api/todos", async (CreateTodoRequest request, TodoService todoService, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request?.Title) || request.Title.Length > 200)
+    {
+        return Results.BadRequest(new { error = "title is required and must be 1-200 characters" });
+    }
+
+    if (request.Description?.Length > 1000)
+    {
+        return Results.BadRequest(new { error = "description must be 0-1000 characters" });
+    }
+
+    var todo = await todoService.CreateAsync(request, ct);
+    return Results.Ok(todo);
+})
+.WithName("CreateTodo")
+.WithOpenApi();
+
+// PUT /api/todos/{id} - TODO更新
+app.MapPut("/api/todos/{id}", async (string id, UpdateTodoRequest request, TodoService todoService, CancellationToken ct) =>
+{
+    if (request is null)
+    {
+        return Results.BadRequest(new { error = "request body is required" });
+    }
+
+    if (request.Title is not null && (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200))
+    {
+        return Results.BadRequest(new { error = "title must be 1-200 characters when provided" });
+    }
+
+    if (request.Description?.Length > 1000)
+    {
+        return Results.BadRequest(new { error = "description must be 0-1000 characters" });
+    }
+
+    var todo = await todoService.UpdateAsync(id, request, ct);
+    if (todo is null)
+    {
+        return Results.NotFound(new { error = $"Todo with id '{id}' not found" });
+    }
+    return Results.Ok(todo);
+})
+.WithName("UpdateTodo")
+.WithOpenApi();
+
+// DELETE /api/todos/{id} - TODO削除
+app.MapDelete("/api/todos/{id}", async (string id, TodoService todoService, CancellationToken ct) =>
+{
+    var deleted = await todoService.DeleteAsync(id, ct);
+    if (!deleted)
+    {
+        return Results.NotFound(new { error = $"Todo with id '{id}' not found" });
+    }
+    return Results.NoContent();
+})
+.WithName("DeleteTodo")
 .WithOpenApi();
 
 app.Run();

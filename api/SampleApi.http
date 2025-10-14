@@ -1,1 +1,121 @@
 @SampleApi_HostAddress = http://localhost:5073
+@SampleApi_HostAddress_Https = https://localhost:7082
+
+###############################################################################
+# Health Check
+###############################################################################
+
+### Health Check
+GET {{SampleApi_HostAddress_Https}}/api/health
+
+###############################################################################
+# Chat API
+###############################################################################
+
+### Chat Request
+POST {{SampleApi_HostAddress_Https}}/api/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ]
+}
+
+###############################################################################
+# TODO API
+###############################################################################
+
+### Get all TODOs
+GET {{SampleApi_HostAddress_Https}}/api/todos
+
+### Create a TODO
+# @name createTodo
+POST {{SampleApi_HostAddress_Https}}/api/todos
+Content-Type: application/json
+
+{
+  "title": "Buy milk",
+  "description": "2 liters of whole milk from the supermarket"
+}
+
+### Create another TODO
+POST {{SampleApi_HostAddress_Https}}/api/todos
+Content-Type: application/json
+
+{
+  "title": "Finish project documentation",
+  "description": "Complete the API documentation and user guide"
+}
+
+### Create a TODO without description
+POST {{SampleApi_HostAddress_Https}}/api/todos
+Content-Type: application/json
+
+{
+  "title": "Call dentist"
+}
+
+### Update a TODO - Mark as completed
+# Replace {id} with an actual GUID from the create response
+PUT {{SampleApi_HostAddress_Https}}/api/todos/{id}
+Content-Type: application/json
+
+{
+  "isCompleted": true
+}
+
+### Update a TODO - Change title and description
+PUT {{SampleApi_HostAddress_Https}}/api/todos/{id}
+Content-Type: application/json
+
+{
+  "title": "Buy milk and bread",
+  "description": "2 liters of whole milk and a loaf of bread"
+}
+
+### Update a TODO - Change only description
+PUT {{SampleApi_HostAddress_Https}}/api/todos/{id}
+Content-Type: application/json
+
+{
+  "description": "Updated description"
+}
+
+### Delete a TODO
+# Replace {id} with an actual GUID
+DELETE {{SampleApi_HostAddress_Https}}/api/todos/{id}
+
+###############################################################################
+# Error Cases
+###############################################################################
+
+### Create TODO with empty title (should fail with 400)
+POST {{SampleApi_HostAddress_Https}}/api/todos
+Content-Type: application/json
+
+{
+  "title": ""
+}
+
+### Create TODO with too long title (should fail with 400)
+POST {{SampleApi_HostAddress_Https}}/api/todos
+Content-Type: application/json
+
+{
+  "title": "This is a very long title that exceeds the maximum allowed length of 200 characters. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris."
+}
+
+### Update non-existent TODO (should fail with 404)
+PUT {{SampleApi_HostAddress_Https}}/api/todos/00000000-0000-0000-0000-000000000000
+Content-Type: application/json
+
+{
+  "isCompleted": true
+}
+
+### Delete non-existent TODO (should fail with 404)
+DELETE {{SampleApi_HostAddress_Https}}/api/todos/00000000-0000-0000-0000-000000000000
