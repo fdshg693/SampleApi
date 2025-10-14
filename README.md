@@ -1,6 +1,6 @@
 # SampleApi（全体 README）
 
-このリポジトリは、SvelteKit（フロントエンド）と ASP.NET Core Minimal API（バックエンド）で構成されたシンプルなチャットアプリのサンプルです。開発時は Vite の開発サーバーから .NET API へプロキシして連携します。
+このリポジトリは、SvelteKit（フロントエンド）と ASP.NET Core Minimal API（バックエンド）で構成されたシンプルなチャットアプリ＋TODOアプリのサンプルです。開発時は Vite の開発サーバーから .NET API へプロキシして連携します。
 
 ## 構成
 
@@ -11,9 +11,10 @@ SampleApi/
   memo/   # 開発メモなど（任意）
 ```
 
-- バックエンドは `/api/health` と `/api/chat` を提供
+- バックエンドは `/api/health`、`/api/chat`、`/api/todos` を提供
 - フロントは `/api/*` へのアクセスを Vite の dev server で .NET API へプロキシ
 - OpenAI キー未設定時はスタブ（簡易エコー）で応答
+- TODO機能はインメモリストアで CRUD 操作を提供
 
 ## 前提条件
 
@@ -66,14 +67,21 @@ pnpm dev      # または npm run dev
   - `BASE` は空文字（同一オリジン想定）。開発時は Vite の dev proxy が `/api` を .NET に転送
   - `sendChat(request)` → POST `/api/chat`
   - `health()` → GET `/api/health`
-- 画面は `front/src/routes/+page.svelte`
-  - マウント時に `health()` を実行して疎通確認
-  - フォーム送信で `sendChat()` を呼び、応答メッセージを表示
+  - `getTodos()` → GET `/api/todos`
+  - `createTodo(request)` → POST `/api/todos`
+  - `updateTodo(id, request)` → PUT `/api/todos/{id}`
+  - `deleteTodo(id)` → DELETE `/api/todos/{id}`
+- 画面は `front/src/routes/+page.svelte`（チャット）と `front/src/routes/todos/+page.svelte`（TODO）
+  - チャット: マウント時に `health()` を実行して疎通確認、フォーム送信で `sendChat()` を呼び、応答メッセージを表示
+  - TODO: マウント時に `getTodos()` で一覧取得、作成・更新・削除の各操作を API 経由で実行
 
 ## API の仕様（抜粋）
 
+### ヘルスチェック
 - GET `/api/health`
   - 例: `{ "status": "ok", "time": "2025-01-01T00:00:00Z" }`
+
+### チャット
 - POST `/api/chat`
   - リクエスト例:
     ```json
@@ -89,7 +97,21 @@ pnpm dev      # または npm run dev
   - `messages` 未指定/空は 400 を返却
   - キー未設定や外部 API エラー時は `isStub: true` のスタブ応答
 
-詳細は `api/README.md` と `api/Program.cs`/`Services/AiChatService.cs` を参照してください。
+### TODO（インメモリCRUD）
+- GET `/api/todos`
+  - レスポンス: `{ "todos": [...], "total": 0 }`
+- POST `/api/todos`
+  - リクエスト: `{ "title": "...", "description": "..." }`
+  - レスポンス: 作成された `TodoItem`
+  - `title` が空の場合は 400 を返却
+- PUT `/api/todos/{id}`
+  - リクエスト: `{ "title": "...", "description": "...", "isCompleted": true }`（全て省略可）
+  - レスポンス: 更新された `TodoItem`
+  - 存在しない ID は 404 を返却
+- DELETE `/api/todos/{id}`
+  - 成功時は 204、存在しない ID は 404 を返却
+
+詳細は `api/README.md` と `api/Program.cs`/`Services/AiChatService.cs`/`Services/TodoService.cs` を参照してください。
 
 ## 設定と環境変数
 
