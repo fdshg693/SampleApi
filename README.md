@@ -1,136 +1,414 @@
-# SampleApi（全体 README）
+# SampleApi
 
-このリポジトリは、SvelteKit（フロントエンド）と ASP.NET Core Minimal API（バックエンド）で構成されたシンプルなチャットアプリ＋TODOアプリのサンプルです。開発時は Vite の開発サーバーから .NET API へプロキシして連携します。
+このリポジトリは、**SvelteKit（フロントエンド）** と **ASP.NET Core Minimal API（バックエンド）** で構成されたフルスタック・チャット＋TODOアプリケーションのサンプルです。
 
-## 構成
+## 🎯 プロジェクト概要
+
+- **バックエンド**: ASP.NET Core Minimal API (.NET 9) - REST API、OpenAI Chat Completions 統合、インメモリTODO管理
+- **フロントエンド**: SvelteKit + Vite - モダンなUIフレームワークと高速開発環境
+- **API連携**: Vite開発サーバーが `/api/*` を .NET API（HTTPS）にプロキシ
+- **型安全**: Orval を使用して OpenAPI 仕様から TypeScript クライアントを自動生成
+- **AI統合**: OpenAI Chat Completions API（キー未設定時はスタブ応答で動作確認可能）
+
+## 📁 ディレクトリ構成
 
 ```
 SampleApi/
-  api/    # ASP.NET Core Minimal API (.NET 9)
-  front/  # SvelteKit + Vite フロントエンド
-  memo/   # 開発メモなど（任意）
+├── api/              # ASP.NET Core Minimal API (.NET 9)
+│   ├── Models/       # リクエスト/レスポンスDTO
+│   ├── Services/     # ビジネスロジック（AiChatService, TodoService）
+│   ├── Properties/   # launchSettings.json（ポート設定）
+│   └── Program.cs    # エンドポイント定義とDI設定
+├── front/            # SvelteKit + Vite フロントエンド
+│   ├── src/
+│   │   ├── lib/
+│   │   │   ├── api.ts             # APIクライアント関数
+│   │   │   └── generated/         # Orvalによる自動生成コード
+│   │   └── routes/
+│   │       ├── +page.svelte       # チャット画面
+│   │       └── todos/+page.svelte # TODO管理画面
+│   └── vite.config.ts             # Viteプロキシ設定
+├── docs/             # ドキュメント（OpenAPI, Orval設定など）
+├── feature/          # 機能仕様・実装メモ
+└── .github/
+    ├── copilot-instructions.md    # Copilot向けテクニカルガイド
+    └── workflows/                 # GitHub Actions（Azure Web App デプロイ）
 ```
 
-- バックエンドは `/api/health`、`/api/chat`、`/api/todos` を提供
-- フロントは `/api/*` へのアクセスを Vite の dev server で .NET API へプロキシ
-- OpenAI キー未設定時はスタブ（簡易エコー）で応答
-- TODO機能はインメモリストアで CRUD 操作を提供
+## 🚀 主な機能
 
-## 前提条件
+### 1. ヘルスチェック
+- **GET** `/api/health` - APIの稼働状態とサーバー時刻を返却
 
-- Node.js（18+ 推奨）/ pnpm または npm
-- .NET SDK 9（`dotnet --version` で確認）
-- 開発用 HTTPS 証明書の信頼（必要に応じて）
+### 2. AIチャット
+- **POST** `/api/chat` - OpenAI Chat Completions API を使用したチャット機能
+  - OpenAIキー設定時は実際のAI応答
+  - キー未設定時はスタブ（エコー）応答
+  - モデル指定可能（デフォルト: `gpt-4o-mini`）
 
-## 起動手順（開発）
+### 3. TODO管理（CRUD）
+- **GET** `/api/todos` - 全TODO取得
+- **POST** `/api/todos` - 新規TODO作成
+- **PUT** `/api/todos/{id}` - TODO更新
+- **DELETE** `/api/todos/{id}` - TODO削除
+- インメモリストレージ使用（`ConcurrentDictionary`）
 
-ターミナルは Windows PowerShell を想定しています。
+## 📋 前提条件
 
-### 1) API を起動
+- **Node.js**: 18 以上（推奨: 20+）
+- **パッケージマネージャー**: pnpm（推奨）または npm
+- **.NET SDK**: 9.0（`dotnet --version` で確認）
+- **開発用HTTPS証明書**: 信頼済み（`dotnet dev-certs https --trust`）
+- **オプション**: OpenAI API キー（実際のAI応答を使用する場合）
+
+## 🔧 起動手順（ローカル開発）
+
+### 1️⃣ バックエンド（API）を起動
 
 ```powershell
-cd c:\CodeStudy\SampleApi\api
-# （任意）OpenAI キーを設定すると実 API 呼び出し、未設定ならスタブ応答
-# 一時的に設定する場合:
-#$env:OPENAI_API_KEY = "sk-..."
-# 永続的に設定する場合:
-#setx OPENAI_API_KEY "sk-..."
+# プロジェクトディレクトリに移動
+cd api
 
-# 依存関係復元と起動
-dotnet restore
-# HTTPS 用の開発証明書を信頼（未実行の場合）
+# HTTPS開発証明書を信頼（初回のみ）
 dotnet dev-certs https --trust
-# API 起動
+
+# 依存関係を復元
+dotnet restore
+
+# （オプション）OpenAI APIキーを設定
+# 一時的に設定（現在のセッションのみ）:
+$env:OPENAI_API_KEY = "sk-..."
+# 永続的に設定（システム環境変数）:
+# setx OPENAI_API_KEY "sk-..."
+
+# API起動
 dotnet run
 ```
 
-- 既定の起動 URL は `launchSettings.json` により `https://localhost:7082`（および `http://localhost:5073`）
-- 開発時のみ OpenAPI を `/openapi/v1.json` に公開
+**起動URL**:
+- HTTPS: `https://localhost:7082`（推奨）
+- HTTP: `http://localhost:5073`
+- OpenAPI仕様: `https://localhost:7082/openapi/v1.json`（開発環境のみ）
+- Swagger UI: `https://localhost:7082/swagger`（開発環境のみ）
 
-### 2) フロントを起動
+### 2️⃣ フロントエンドを起動
 
-別ターミナルで:
+**別のターミナル**で以下を実行:
 
 ```powershell
-cd c:\CodeStudy\SampleApi\front
+# フロントエンドディレクトリに移動
+cd front
+
+# 依存関係をインストール
 pnpm install  # または npm install
+
+# 開発サーバー起動
 pnpm dev      # または npm run dev
 ```
 
-- 既定で `http://localhost:5173` で起動
-- `front/vite.config.ts` のプロキシ設定により、`/api` へのリクエストは `https://localhost:7082` に転送
-- バックエンドの CORS は `http://localhost:5173` と `http://localhost:3000` を許可済み
+**起動URL**:
+- フロントエンド: `http://localhost:5173`
+- `/api/*` へのリクエストは Vite プロキシ経由で `https://localhost:7082` に転送されます
 
-## 連携の仕組み（Front ⇄ API）
+### 3️⃣ ブラウザでアクセス
 
-- フロントの呼び出しは `front/src/lib/api.ts` に集約
-  - `BASE` は空文字（同一オリジン想定）。開発時は Vite の dev proxy が `/api` を .NET に転送
-  - `sendChat(request)` → POST `/api/chat`
-  - `health()` → GET `/api/health`
-  - `getTodos()` → GET `/api/todos`
-  - `createTodo(request)` → POST `/api/todos`
-  - `updateTodo(id, request)` → PUT `/api/todos/{id}`
-  - `deleteTodo(id)` → DELETE `/api/todos/{id}`
-- 画面は `front/src/routes/+page.svelte`（チャット）と `front/src/routes/todos/+page.svelte`（TODO）
-  - チャット: マウント時に `health()` を実行して疎通確認、フォーム送信で `sendChat()` を呼び、応答メッセージを表示
-  - TODO: マウント時に `getTodos()` で一覧取得、作成・更新・削除の各操作を API 経由で実行
+- **チャット画面**: http://localhost:5173/
+- **TODO管理画面**: http://localhost:5173/todos
 
-## API の仕様（抜粋）
+## 🔄 APIクライアントの自動生成（Orval）
 
-### ヘルスチェック
-- GET `/api/health`
-  - 例: `{ "status": "ok", "time": "2025-01-01T00:00:00Z" }`
+OpenAPI仕様から TypeScript クライアントコードを自動生成できます:
 
-### チャット
-- POST `/api/chat`
-  - リクエスト例:
-    ```json
+```powershell
+cd front
+
+# SSL証明書検証を一時的に無効化してAPIクライアント生成
+$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
+pnpm generate:api
+Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
+```
+
+生成されたファイルは `front/src/lib/generated/` に配置されます。
+
+## 🔗 フロントエンドとバックエンドの連携
+
+### アーキテクチャ
+
+```
+Browser (localhost:5173)
+    ↓ HTTP Request to /api/*
+Vite Dev Server (proxy)
+    ↓ Forward to https://localhost:7082/api/*
+ASP.NET Core API
+    ↓ Response
+Browser
+```
+
+### APIクライアント（`front/src/lib/api.ts`）
+
+フロントエンドのすべてのAPI呼び出しは `api.ts` に集約されています:
+
+| 関数 | HTTPメソッド | エンドポイント | 説明 |
+|------|-------------|---------------|------|
+| `health()` | GET | `/api/health` | ヘルスチェック |
+| `sendChat(request)` | POST | `/api/chat` | チャット送信 |
+| `getTodos()` | GET | `/api/todos` | TODO一覧取得 |
+| `createTodo(request)` | POST | `/api/todos` | TODO作成 |
+| `updateTodo(id, request)` | PUT | `/api/todos/{id}` | TODO更新 |
+| `deleteTodo(id)` | DELETE | `/api/todos/{id}` | TODO削除 |
+
+### 画面コンポーネント
+
+- **チャット画面** (`front/src/routes/+page.svelte`)
+  - マウント時に `health()` で疎通確認
+  - ユーザー入力を `sendChat()` で送信
+  - AI応答をメッセージリストに追加表示
+
+- **TODO管理画面** (`front/src/routes/todos/+page.svelte`)
+  - マウント時に `getTodos()` で一覧取得
+  - 作成・更新・削除の各操作を対応するAPI関数で実行
+  - インメモリストレージのためリロード時にデータはリセット
+
+## 📖 API仕様
+
+### 1. ヘルスチェック
+
+**GET** `/api/health`
+
+```json
+// レスポンス例
+{
+  "status": "ok",
+  "time": "2025-10-15T12:34:56.789Z"
+}
+```
+
+### 2. チャット
+
+**POST** `/api/chat`
+
+```json
+// リクエスト
+{
+  "messages": [
+    { "role": "user", "content": "こんにちは" }
+  ],
+  "model": "gpt-4o-mini"  // 省略可（デフォルト: gpt-4o-mini）
+}
+
+// レスポンス
+{
+  "reply": "こんにちは！何かお手伝いできることはありますか？",
+  "isStub": false  // trueの場合はスタブ応答
+}
+```
+
+**エラーハンドリング**:
+- `400 Bad Request`: `messages` が空または未指定
+- `isStub: true`: OpenAI API キー未設定または外部APIエラー時
+
+### 3. TODO管理（CRUD）
+
+#### 一覧取得
+**GET** `/api/todos`
+
+```json
+{
+  "todos": [
     {
-      "messages": [ { "role": "user", "content": "こんにちは" } ],
-      "model": "gpt-4o-mini" // 省略可
+      "id": "abc123",
+      "title": "買い物",
+      "description": "牛乳、卵、パン",
+      "isCompleted": false,
+      "createdAt": "2025-10-15T10:00:00Z"
     }
-    ```
-  - レスポンス例:
-    ```json
-    { "reply": "...", "isStub": false }
-    ```
-  - `messages` 未指定/空は 400 を返却
-  - キー未設定や外部 API エラー時は `isStub: true` のスタブ応答
+  ],
+  "total": 1
+}
+```
 
-### TODO（インメモリCRUD）
-- GET `/api/todos`
-  - レスポンス: `{ "todos": [...], "total": 0 }`
-- POST `/api/todos`
-  - リクエスト: `{ "title": "...", "description": "..." }`
-  - レスポンス: 作成された `TodoItem`
-  - `title` が空の場合は 400 を返却
-- PUT `/api/todos/{id}`
-  - リクエスト: `{ "title": "...", "description": "...", "isCompleted": true }`（全て省略可）
-  - レスポンス: 更新された `TodoItem`
-  - 存在しない ID は 404 を返却
-- DELETE `/api/todos/{id}`
-  - 成功時は 204、存在しない ID は 404 を返却
+#### 作成
+**POST** `/api/todos`
 
-詳細は `api/README.md` と `api/Program.cs`/`Services/AiChatService.cs`/`Services/TodoService.cs` を参照してください。
+```json
+// リクエスト
+{
+  "title": "買い物",
+  "description": "牛乳、卵、パン"  // 省略可
+}
 
-## 設定と環境変数
+// レスポンス: 作成されたTodoItem
+```
 
-- OpenAI の設定方法
-  - 環境変数: `OPENAI_API_KEY`
-  - appsettings: `OpenAI:ApiKey`, `OpenAI:Model`（既定: `gpt-4o-mini`）
-- 優先順位: appsettings > 環境変数
-- 証明書エラーが出る場合は `dotnet dev-certs https --trust` を実行
+**エラー**: `400 Bad Request` - `title` が空
 
-## よくあるトラブル
+#### 更新
+**PUT** `/api/todos/{id}`
 
-- フロントから 404/ネットワークエラー
-  - API が起動していない、または証明書未信頼
-  - `vite.config.ts` の `target` が実際の API https ポート（`launchSettings.json` の `https`）と一致しているか
-- CORS エラー
-  - API 側で許可されているオリジンにアクセス元が含まれているか（既定で `5173` と `3000`）
-- 400 Bad Request（/api/chat）
-  - `messages` に 1 件以上の要素が必要
+```json
+// リクエスト（全フィールド省略可）
+{
+  "title": "買い物（完了）",
+  "description": "全て購入済み",
+  "isCompleted": true
+}
 
-## ライセンス
+// レスポンス: 更新されたTodoItem
+```
 
-このサンプルのライセンス条件が必要な場合はプロジェクトに合わせて追記してください。
+**エラー**: `404 Not Found` - 存在しないID
+
+#### 削除
+**DELETE** `/api/todos/{id}`
+
+- **成功**: `204 No Content`
+- **エラー**: `404 Not Found` - 存在しないID
+
+詳細は以下を参照:
+- エンドポイント定義: `api/Program.cs`
+- ビジネスロジック: `api/Services/AiChatService.cs`, `api/Services/TodoService.cs`
+- データモデル: `api/Models/ChatModels.cs`, `api/Models/TodoModels.cs`
+
+## ⚙️ 設定と環境変数
+
+### OpenAI API設定
+
+OpenAI Chat Completions API を使用するには、以下のいずれかの方法でAPIキーを設定します:
+
+#### 方法1: 環境変数（推奨）
+
+```powershell
+# 一時的（現在のセッションのみ）
+$env:OPENAI_API_KEY = "sk-..."
+
+# 永続的（ユーザー環境変数）
+setx OPENAI_API_KEY "sk-..."
+```
+
+#### 方法2: appsettings.json
+
+```json
+{
+  "OpenAI": {
+    "ApiKey": "sk-...",
+    "Model": "gpt-4o-mini"
+  }
+}
+```
+
+**優先順位**: `appsettings.json` > 環境変数
+
+**デフォルトモデル**: `gpt-4o-mini`
+
+### 開発環境設定
+
+| 項目 | 値 | 設定ファイル |
+|------|-----|------------|
+| API HTTPS ポート | 7082 | `api/Properties/launchSettings.json` |
+| API HTTP ポート | 5073 | `api/Properties/launchSettings.json` |
+| フロント ポート | 5173 | Vite デフォルト |
+| CORS 許可オリジン | `localhost:5173`, `localhost:3000` | `api/Program.cs` |
+| Vite プロキシ先 | `https://localhost:7082` | `front/vite.config.ts` |
+
+## 🛠️ トラブルシューティング
+
+### 問題: フロントエンドから404/ネットワークエラー
+
+**原因と解決策**:
+1. **APIが起動していない**
+   - `https://localhost:7082/api/health` に直接アクセスして確認
+   - バックエンドターミナルでエラーがないか確認
+
+2. **HTTPS証明書が信頼されていない**
+   ```powershell
+   dotnet dev-certs https --trust
+   ```
+
+3. **ポート設定の不一致**
+   - `api/Properties/launchSettings.json` のHTTPSポート
+   - `front/vite.config.ts` のプロキシ `target` URL
+   - 両方が `https://localhost:7082` で一致しているか確認
+
+### 問題: CORSエラー
+
+**原因**: フロントエンドのオリジンがAPI側で許可されていない
+
+**解決策**: `api/Program.cs` の CORS 設定を確認
+```csharp
+.WithOrigins(
+    "http://localhost:5173", // Vite
+    "http://localhost:3000"  // Next.js/CRA
+)
+```
+
+新しいポートを使用する場合は、ここに追加します。
+
+### 問題: 400 Bad Request（/api/chat）
+
+**原因**: リクエストボディの検証エラー
+
+**解決策**:
+- `messages` 配列に少なくとも1件のメッセージが必要
+- 各メッセージに `role` と `content` が必要
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "何か質問" }
+  ]
+}
+```
+
+### 問題: 400 Bad Request（/api/todos POST）
+
+**原因**: `title` が空または未指定
+
+**解決策**: `title` フィールドを必ず含める
+```json
+{
+  "title": "タスク名",
+  "description": "詳細（省略可）"
+}
+```
+
+### 問題: Orval APIクライアント生成時のSSLエラー
+
+**解決策**: SSL証明書検証を一時的に無効化
+```powershell
+cd front
+$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
+pnpm generate:api
+Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
+```
+
+## 🚀 デプロイ
+
+### GitHub Actions（Azure Web App）
+
+`.github/workflows/master_seiwan-sampleapi.yml` で自動デプロイ設定済み:
+- トリガー: 手動ディスパッチ（`workflow_dispatch`）
+- ビルド: .NET 9
+- デプロイ先: Azure Web App `seiwan-sampleApi`
+
+## 📚 関連ドキュメント
+
+- **テクニカルガイド**: `.github/copilot-instructions.md` - Copilot向けの詳細な実装ガイド
+- **OpenAPI仕様**: `docs/openapi.md` - API仕様の詳細
+- **Orval設定**: `docs/orval.md` - APIクライアント自動生成の設定
+- **機能仕様**: `feature/` - 各機能の仕様書と実装メモ
+
+## 🤝 開発規約
+
+- **バックエンド**:
+  - 新規エンドポイントは `api/Program.cs` に Minimal API スタイルで追加
+  - ビジネスロジックは `api/Services/` 配下のサービスクラスに実装
+  - リクエスト/レスポンスDTOは `api/Models/` に配置
+
+- **フロントエンド**:
+  - API呼び出しは必ず `front/src/lib/api.ts` 経由で実行
+  - 新規API関数を追加したら、Svelteコンポーネントからインポート
+  - `/api` パスプレフィックスを維持（Viteプロキシ対象）
+
+- **型安全**:
+  - OpenAPI仕様を更新したら `pnpm generate:api` を実行
+  - 生成されたクライアントコードは手動編集しない

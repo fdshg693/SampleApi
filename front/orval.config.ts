@@ -10,7 +10,7 @@ export default defineConfig({
       mode: 'tags-split',
       target: 'src/lib/generated/api.ts',
       schemas: 'src/lib/generated/models',
-      client: 'fetch',
+      client: 'svelte-query',
       baseUrl: 'http://localhost:5073',
       override: {
         mutator: {
