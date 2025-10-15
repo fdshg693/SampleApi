@@ -48,10 +48,13 @@ builder.Services.AddHttpClient();
 // FluentValidation
 builder.Services.AddValidatorsFromAssemblyContaining<CreateTodoRequestValidator>();
 
+// Redis connection (singleton)
+builder.Services.AddSingleton<RedisConnectionService>();
+
 // AI chat service
 builder.Services.AddSingleton<AiChatService>();
 
-// TODO service
+// TODO service (Redis version)
 builder.Services.AddSingleton<TodoService>();
 
 var app = builder.Build();
