@@ -6,6 +6,23 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+// Add Swagger UI for Development
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "SampleApi",
+        Version = "v1",
+        Description = "A minimal full-stack chat + TODO API built with ASP.NET Core Minimal API",
+        Contact = new Microsoft.OpenApi.Models.OpenApiContact
+        {
+            Name = "SampleApi Team",
+        }
+    });
+});
+
 // Allow React dev server(s) to call the API during development
 builder.Services.AddCors(options =>
 {
@@ -34,15 +51,28 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/openapi/v1.json", "SampleApi v1");
+        c.RoutePrefix = "swagger";
+    });
 }
 
-app.UseHttpsRedirection();
+// Use HTTPS redirection only in Production to avoid CORS issues in Development
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors();
 
 // Health check for quick smoke tests
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", time = DateTimeOffset.UtcNow }))
    .WithName("Health")
+   .WithTags("Health")
+   .WithSummary("Health check endpoint")
+   .WithDescription("Returns the API health status and current server time for quick smoke tests.")
    .WithOpenApi();
 
 // Chat endpoint: accepts { messages: [{ role, content }], model? } and returns { reply, isStub }
@@ -57,6 +87,9 @@ app.MapPost("/api/chat", async (ChatRequest request, AiChatService ai, Cancellat
     return Results.Ok(response);
 })
 .WithName("Chat")
+.WithTags("Chat")
+.WithSummary("Send chat messages to AI")
+.WithDescription("Accepts an array of chat messages and returns an AI-generated response. Supports OpenAI Chat Completions API or falls back to a stub echo if the API key is not configured.")
 .WithOpenApi();
 
 // TODO endpoints
@@ -67,6 +100,9 @@ app.MapGet("/api/todos", async (TodoService todoService, CancellationToken ct) =
     return Results.Ok(response);
 })
 .WithName("GetTodos")
+.WithTags("Todos")
+.WithSummary("Get all TODO items")
+.WithDescription("Retrieves all TODO items from the in-memory store, including their id, title, description, completion status, and timestamps.")
 .WithOpenApi();
 
 // POST /api/todos - 新規TODO作成
@@ -86,6 +122,9 @@ app.MapPost("/api/todos", async (CreateTodoRequest request, TodoService todoServ
     return Results.Ok(todo);
 })
 .WithName("CreateTodo")
+.WithTags("Todos")
+.WithSummary("Create a new TODO item")
+.WithDescription("Creates a new TODO item with the specified title and optional description. Title must be 1-200 characters, description must be 0-1000 characters.")
 .WithOpenApi();
 
 // PUT /api/todos/{id} - TODO更新
@@ -114,6 +153,9 @@ app.MapPut("/api/todos/{id}", async (string id, UpdateTodoRequest request, TodoS
     return Results.Ok(todo);
 })
 .WithName("UpdateTodo")
+.WithTags("Todos")
+.WithSummary("Update an existing TODO item")
+.WithDescription("Updates a TODO item's title, description, or completion status. All fields are optional in the request body. Returns 404 if the TODO item is not found.")
 .WithOpenApi();
 
 // DELETE /api/todos/{id} - TODO削除
@@ -127,6 +169,9 @@ app.MapDelete("/api/todos/{id}", async (string id, TodoService todoService, Canc
     return Results.NoContent();
 })
 .WithName("DeleteTodo")
+.WithTags("Todos")
+.WithSummary("Delete a TODO item")
+.WithDescription("Permanently removes a TODO item from the in-memory store. Returns 204 No Content on success, 404 if the item is not found.")
 .WithOpenApi();
 
 app.Run();
