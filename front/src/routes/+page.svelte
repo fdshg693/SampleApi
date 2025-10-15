@@ -3,10 +3,13 @@
 	import { health } from '$lib/api';
 	import { createChat } from '$lib/generated/chat/chat';
 	import type { ChatMessage } from '$lib/generated/models';
+	import { chatMessageSchema } from '$lib/schemas';
+	import { ZodError } from 'zod';
 
 	let messages = $state<ChatMessage[]>([]);
 	let input = $state('');
 	let error: string | null = $state(null);
+	let validationError: string | null = $state(null);
 	let isStub = $state(false);
 
 	// TanStack Query mutation for sending chat messages
@@ -20,6 +23,7 @@
 					isStub = data.isStub ?? false;
 				}
 				error = null;
+				validationError = null;
 			},
 			onError: (err: any) => {
 				error = err?.message ?? 'Failed to send message';
@@ -37,19 +41,31 @@
 	});
 
 	function send() {
-		if (!input.trim() || chatMutation.isPending) return;
+		if (chatMutation.isPending) return;
 		
-		const userMsg: ChatMessage = { role: 'user', content: input.trim() };
-		messages = [...messages, userMsg];
-		const currentInput = input;
-		input = '';
-		
-		// Send all messages including the new user message
-		chatMutation.mutate({
-			data: {
-				messages: messages
+		// Zodでバリデーション
+		try {
+			const validated = chatMessageSchema.parse({ message: input });
+			
+			// バリデーション成功: エラーをクリアして送信
+			validationError = null;
+			
+			const userMsg: ChatMessage = { role: 'user', content: validated.message };
+			messages = [...messages, userMsg];
+			input = '';
+			
+			// Send all messages including the new user message
+			chatMutation.mutate({
+				data: {
+					messages: messages
+				}
+			});
+		} catch (err) {
+			// バリデーションエラー: エラーメッセージを表示
+			if (err instanceof ZodError) {
+				validationError = err.errors[0]?.message || 'Invalid input';
 			}
-		});
+		}
 	}
 </script>
 
@@ -85,13 +101,18 @@
 		<div class="error">{error}</div>
 	{/if}
 
+	{#if validationError}
+		<div class="validation-error">{validationError}</div>
+	{/if}
+
 	<form class="input" onsubmit={send}>
 		<input
 			placeholder="Type a message..."
 			bind:value={input}
 			autocomplete="off"
+			class:error={validationError}
 		/>
-		<button disabled={chatMutation.isPending || !input.trim()}>
+		<button disabled={chatMutation.isPending}>
 			{chatMutation.isPending ? 'Sending…' : 'Send'}
 		</button>
 	</form>
@@ -122,7 +143,9 @@
 	.empty { opacity: .7; }
 	.input { display: flex; gap: .5rem; }
 	.input input { flex: 1; padding: .6rem .75rem; border-radius: 8px; border: 1px solid #374151; background: #0f172a; color: #e5e7eb; }
+	.input input.error { border-color: #ef4444; }
 	.input button { padding: .6rem .9rem; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #e5e7eb; cursor: pointer; }
 	.input button[disabled] { opacity: .6; cursor: not-allowed; }
 	.error { color: #fecaca; background: #7f1d1d; border: 1px solid #991b1b; padding: .5rem .75rem; border-radius: 8px; }
+	.validation-error { color: #fca5a5; font-size: 0.875rem; margin: 0.5rem 0; }
 </style>

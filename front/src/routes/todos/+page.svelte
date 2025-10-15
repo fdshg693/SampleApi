@@ -8,10 +8,15 @@
 	} from '$lib/generated/todos/todos';
 	import type { TodoItem } from '$lib/api';
 	import { useQueryClient } from '@tanstack/svelte-query';
+	import { createTodoSchema } from '$lib/schemas';
+	import { ZodError } from 'zod';
 
 	// 新規TODO作成フォーム
 	let newTitle = $state('');
 	let newDescription = $state('');
+	
+	// バリデーションエラー
+	let validationErrors = $state<Record<string, string>>({});
 	
 	const queryClient = useQueryClient();
 
@@ -31,6 +36,7 @@
 				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
 				newTitle = '';
 				newDescription = '';
+				validationErrors = {}; // エラーをクリア
 			}
 		}
 	});
@@ -110,14 +116,35 @@
 
 	function handleCreate(e: Event) {
 		e.preventDefault();
-		if (!newTitle.trim() || createMutation.isPending) return;
+		if (createMutation.isPending) return;
 		
-		createMutation.mutate({
-			data: {
-				title: newTitle.trim(),
-				description: newDescription.trim() || undefined
+		// Zodでバリデーション
+		try {
+			const validated = createTodoSchema.parse({
+				title: newTitle,
+				description: newDescription
+			});
+			
+			// バリデーション成功: エラーをクリアして送信
+			validationErrors = {};
+			
+			createMutation.mutate({
+				data: {
+					title: validated.title,
+					description: validated.description || undefined
+				}
+			});
+		} catch (err) {
+			// バリデーションエラー: エラーメッセージを表示
+			if (err instanceof ZodError) {
+				const errors: Record<string, string> = {};
+				err.errors.forEach((error) => {
+					const path = error.path.join('.');
+					errors[path] = error.message;
+				});
+				validationErrors = errors;
 			}
-		});
+		}
 	}
 
 	function toggleComplete(todo: TodoItem) {
@@ -170,8 +197,11 @@
 					placeholder="Title (required, max 200 characters)"
 					bind:value={newTitle}
 					maxlength="200"
-					required
+					class:error={validationErrors['title']}
 				/>
+				{#if validationErrors['title']}
+					<span class="error-message">{validationErrors['title']}</span>
+				{/if}
 			</div>
 			<div class="form-group">
 				<textarea
@@ -179,9 +209,13 @@
 					bind:value={newDescription}
 					maxlength="1000"
 					rows="3"
+					class:error={validationErrors['description']}
 				></textarea>
+				{#if validationErrors['description']}
+					<span class="error-message">{validationErrors['description']}</span>
+				{/if}
 			</div>
-			<button type="submit" disabled={createMutation.isPending || !newTitle.trim()}>
+			<button type="submit" disabled={createMutation.isPending}>
 				{createMutation.isPending ? 'Creating...' : '➕ Add TODO'}
 			</button>
 		</form>
@@ -315,6 +349,18 @@
 
 	.form-group textarea {
 		resize: vertical;
+	}
+
+	.form-group input.error,
+	.form-group textarea.error {
+		border-color: #ef4444;
+	}
+
+	.error-message {
+		display: block;
+		color: #fca5a5;
+		font-size: 0.875rem;
+		margin-top: 0.25rem;
 	}
 
 	button[type="submit"] {
