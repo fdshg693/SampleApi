@@ -1,81 +1,148 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { getTodos, createTodo, updateTodo, deleteTodo, type TodoItem } from '$lib/api';
+	import { 
+		createGetTodos, 
+		createCreateTodo, 
+		createUpdateTodo, 
+		createDeleteTodo,
+		getGetTodosQueryKey
+	} from '$lib/generated/todos/todos';
+	import type { TodoItem } from '$lib/api';
+	import { useQueryClient } from '@tanstack/svelte-query';
 
-	let todos: TodoItem[] = [];
-	let loading = false;
-	let error: string | null = null;
-	
 	// 新規TODO作成フォーム
-	let newTitle = '';
-	let newDescription = '';
-	let creating = false;
+	let newTitle = $state('');
+	let newDescription = $state('');
+	
+	const queryClient = useQueryClient();
 
-	onMount(async () => {
-		await loadTodos();
+	// Query: TODOリストを取得（自動キャッシング・再フェッチ）
+	const todosQuery = createGetTodos({
+		query: {
+			refetchOnMount: true,
+			staleTime: 30 * 1000, // 30秒間はキャッシュを使用
+		}
 	});
 
-	async function loadTodos() {
-		try {
-			loading = true;
-			error = null;
-			const response = await getTodos();
-			todos = response.todos;
-		} catch (e: any) {
-			error = e?.message ?? 'Failed to load todos';
-		} finally {
-			loading = false;
+	// Mutation: TODO作成
+	const createMutation = createCreateTodo({
+		mutation: {
+			onSuccess: () => {
+				// 成功したら TODO リストを再フェッチ
+				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
+				newTitle = '';
+				newDescription = '';
+			}
 		}
-	}
+	});
 
-	async function handleCreate() {
-		if (!newTitle.trim() || creating) return;
+	// Mutation: TODO更新
+	const updateMutation = createUpdateTodo({
+		mutation: {
+			onMutate: async (variables) => {
+				// 楽観的更新: UIを即座に更新
+				await queryClient.cancelQueries({ queryKey: getGetTodosQueryKey() });
+				
+				const previousTodos = queryClient.getQueryData(getGetTodosQueryKey());
+				
+				// 楽観的にキャッシュを更新
+				queryClient.setQueryData(getGetTodosQueryKey(), (old: any) => {
+					if (!old?.data?.todos) return old;
+					return {
+						...old,
+						data: {
+							...old.data,
+							todos: old.data.todos.map((t: TodoItem) =>
+								t.id === variables.id
+									? { ...t, ...variables.data, updatedAt: new Date().toISOString() }
+									: t
+							)
+						}
+					};
+				});
+				
+				return { previousTodos };
+			},
+			onError: (_err, _variables, context) => {
+				// エラー時はロールバック
+				if (context?.previousTodos) {
+					queryClient.setQueryData(getGetTodosQueryKey(), context.previousTodos);
+				}
+			},
+			onSettled: () => {
+				// 完了後は再フェッチして同期
+				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
+			}
+		}
+	});
+
+	// Mutation: TODO削除
+	const deleteMutation = createDeleteTodo({
+		mutation: {
+			onMutate: async (variables) => {
+				// 楽観的更新
+				await queryClient.cancelQueries({ queryKey: getGetTodosQueryKey() });
+				
+				const previousTodos = queryClient.getQueryData(getGetTodosQueryKey());
+				
+				queryClient.setQueryData(getGetTodosQueryKey(), (old: any) => {
+					if (!old?.data?.todos) return old;
+					return {
+						...old,
+						data: {
+							...old.data,
+							todos: old.data.todos.filter((t: TodoItem) => t.id !== variables.id)
+						}
+					};
+				});
+				
+				return { previousTodos };
+			},
+			onError: (_err, _variables, context) => {
+				if (context?.previousTodos) {
+					queryClient.setQueryData(getGetTodosQueryKey(), context.previousTodos);
+				}
+			},
+			onSettled: () => {
+				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
+			}
+		}
+	});
+
+	function handleCreate(e: Event) {
+		e.preventDefault();
+		if (!newTitle.trim() || createMutation.isPending) return;
 		
-		try {
-			creating = true;
-			error = null;
-			const todo = await createTodo({
+		createMutation.mutate({
+			data: {
 				title: newTitle.trim(),
 				description: newDescription.trim() || undefined
-			});
-			todos = [todo, ...todos];
-			newTitle = '';
-			newDescription = '';
-		} catch (e: any) {
-			error = e?.message ?? 'Failed to create todo';
-		} finally {
-			creating = false;
-		}
+			}
+		});
 	}
 
-	async function toggleComplete(todo: TodoItem) {
-		try {
-			error = null;
-			const updated = await updateTodo(todo.id, {
+	function toggleComplete(todo: TodoItem) {
+		updateMutation.mutate({
+			id: todo.id,
+			data: {
 				isCompleted: !todo.isCompleted
-			});
-			todos = todos.map(t => t.id === todo.id ? updated : t);
-		} catch (e: any) {
-			error = e?.message ?? 'Failed to update todo';
-		}
+			}
+		});
 	}
 
-	async function handleDelete(id: string) {
+	function handleDelete(id: string) {
 		if (!confirm('Are you sure you want to delete this todo?')) return;
-		
-		try {
-			error = null;
-			await deleteTodo(id);
-			todos = todos.filter(t => t.id !== id);
-		} catch (e: any) {
-			error = e?.message ?? 'Failed to delete todo';
-		}
+		deleteMutation.mutate({ id });
 	}
 
 	function formatDate(dateString: string): string {
 		const date = new Date(dateString);
 		return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
+
+	// Reactive derivations using $derived
+	const todos = $derived((todosQuery.data as any)?.data?.todos || []);
+	const loading = $derived(todosQuery.isLoading);
+	const error = $derived(todosQuery.error || createMutation.error || updateMutation.error || deleteMutation.error);
 </script>
 
 <svelte:head>
@@ -91,12 +158,12 @@
 	</header>
 
 	{#if error}
-		<div class="error">{error}</div>
+		<div class="error">{(error as any)?.message ?? 'An error occurred'}</div>
 	{/if}
 
 	<section class="create-section">
 		<h2>Create New TODO</h2>
-		<form on:submit|preventDefault={handleCreate}>
+		<form onsubmit={handleCreate}>
 			<div class="form-group">
 				<input
 					type="text"
@@ -114,8 +181,8 @@
 					rows="3"
 				></textarea>
 			</div>
-			<button type="submit" disabled={creating || !newTitle.trim()}>
-				{creating ? 'Creating...' : '➕ Add TODO'}
+			<button type="submit" disabled={createMutation.isPending || !newTitle.trim()}>
+				{createMutation.isPending ? 'Creating...' : '➕ Add TODO'}
 			</button>
 		</form>
 	</section>
@@ -139,12 +206,12 @@
 								<input
 									type="checkbox"
 									checked={todo.isCompleted}
-									on:change={() => toggleComplete(todo)}
+									onchange={() => toggleComplete(todo)}
 								/>
 								<span class="checkmark"></span>
 							</label>
 							<h3 class:completed-text={todo.isCompleted}>{todo.title}</h3>
-							<button class="delete-btn" on:click={() => handleDelete(todo.id)} title="Delete">
+							<button class="delete-btn" onclick={() => handleDelete(todo.id)} title="Delete">
 								🗑️
 							</button>
 						</div>

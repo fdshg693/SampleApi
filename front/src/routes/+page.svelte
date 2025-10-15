@@ -1,12 +1,31 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sendChat, type ChatMessage, health } from '$lib/api';
+	import { health } from '$lib/api';
+	import { createChat } from '$lib/generated/chat/chat';
+	import type { ChatMessage } from '$lib/generated/models';
 
-	let messages: ChatMessage[] = [];
-	let input = '';
-	let loading = false;
-	let error: string | null = null;
-	let isStub = false;
+	let messages = $state<ChatMessage[]>([]);
+	let input = $state('');
+	let error: string | null = $state(null);
+	let isStub = $state(false);
+
+	// TanStack Query mutation for sending chat messages
+	const chatMutation = createChat({
+		mutation: {
+			onSuccess: (response: any) => {
+				// Extract the response data
+				const data = response?.data;
+				if (data?.reply) {
+					messages = [...messages, { role: 'assistant', content: data.reply }];
+					isStub = data.isStub ?? false;
+				}
+				error = null;
+			},
+			onError: (err: any) => {
+				error = err?.message ?? 'Failed to send message';
+			}
+		}
+	});
 
 	onMount(async () => {
 		try {
@@ -17,23 +36,20 @@
 		}
 	});
 
-	async function send() {
-		if (!input.trim() || loading) return;
-		error = null;
-		loading = true;
-		const controller = new AbortController();
+	function send() {
+		if (!input.trim() || chatMutation.isPending) return;
+		
 		const userMsg: ChatMessage = { role: 'user', content: input.trim() };
 		messages = [...messages, userMsg];
+		const currentInput = input;
 		input = '';
-		try {
-			const res = await sendChat({ messages });
-			messages = [...messages, { role: 'assistant', content: res.reply }];
-			isStub = res.isStub;
-		} catch (e: any) {
-			error = e?.message ?? 'Failed to send message';
-		} finally {
-			loading = false;
-		}
+		
+		// Send all messages including the new user message
+		chatMutation.mutate({
+			data: {
+				messages: messages
+			}
+		});
 	}
 </script>
 
@@ -69,13 +85,15 @@
 		<div class="error">{error}</div>
 	{/if}
 
-	<form class="input" on:submit|preventDefault={send}>
+	<form class="input" onsubmit={send}>
 		<input
 			placeholder="Type a message..."
 			bind:value={input}
 			autocomplete="off"
 		/>
-		<button disabled={loading || !input.trim()}>{loading ? 'Sending…' : 'Send'}</button>
+		<button disabled={chatMutation.isPending || !input.trim()}>
+			{chatMutation.isPending ? 'Sending…' : 'Send'}
+		</button>
 	</form>
 </div>
 

@@ -17,6 +17,11 @@ export default defineConfig({
           path: 'src/lib/generated/custom-instance.ts',
           name: 'customInstance',
         },
+        query: {
+          useQuery: true,
+          useMutation: true,
+          signal: true,
+        },
       },
     },
   },
