@@ -1,5 +1,8 @@
+using FluentValidation;
+using MicroElements.Swashbuckle.FluentValidation.AspNetCore;
 using SampleApi.Models;
 using SampleApi.Services;
+using SampleApi.Validators;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +26,9 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// Add FluentValidation rules to Swagger
+builder.Services.AddFluentValidationRulesToSwagger();
+
 // Allow React dev server(s) to call the API during development
 builder.Services.AddCors(options =>
 {
@@ -38,6 +44,9 @@ builder.Services.AddCors(options =>
 
 // HTTP + typed services
 builder.Services.AddHttpClient();
+
+// FluentValidation
+builder.Services.AddValidatorsFromAssemblyContaining<CreateTodoRequestValidator>();
 
 // AI chat service
 builder.Services.AddSingleton<AiChatService>();
@@ -76,11 +85,15 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", time = DateTimeO
    .WithOpenApi();
 
 // Chat endpoint: accepts { messages: [{ role, content }], model? } and returns { reply, isStub }
-app.MapPost("/api/chat", async (ChatRequest request, AiChatService ai, CancellationToken ct) =>
+app.MapPost("/api/chat", async (ChatRequest request, IValidator<ChatRequest> validator, AiChatService ai, CancellationToken ct) =>
 {
-    if (request?.Messages is null || request.Messages.Count == 0)
+    var validationResult = await validator.ValidateAsync(request, ct);
+    if (!validationResult.IsValid)
     {
-        return Results.BadRequest(new { error = "messages is required and must contain at least one item" });
+        return Results.BadRequest(new { 
+            error = "Validation failed", 
+            errors = validationResult.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+        });
     }
 
     var response = await ai.GetChatCompletionAsync(request, ct);
@@ -106,16 +119,15 @@ app.MapGet("/api/todos", async (TodoService todoService, CancellationToken ct) =
 .WithOpenApi();
 
 // POST /api/todos - 新規TODO作成
-app.MapPost("/api/todos", async (CreateTodoRequest request, TodoService todoService, CancellationToken ct) =>
+app.MapPost("/api/todos", async (CreateTodoRequest request, IValidator<CreateTodoRequest> validator, TodoService todoService, CancellationToken ct) =>
 {
-    if (string.IsNullOrWhiteSpace(request?.Title) || request.Title.Length > 200)
+    var validationResult = await validator.ValidateAsync(request, ct);
+    if (!validationResult.IsValid)
     {
-        return Results.BadRequest(new { error = "title is required and must be 1-200 characters" });
-    }
-
-    if (request.Description?.Length > 1000)
-    {
-        return Results.BadRequest(new { error = "description must be 0-1000 characters" });
+        return Results.BadRequest(new { 
+            error = "Validation failed", 
+            errors = validationResult.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+        });
     }
 
     var todo = await todoService.CreateAsync(request, ct);
@@ -128,21 +140,15 @@ app.MapPost("/api/todos", async (CreateTodoRequest request, TodoService todoServ
 .WithOpenApi();
 
 // PUT /api/todos/{id} - TODO更新
-app.MapPut("/api/todos/{id}", async (string id, UpdateTodoRequest request, TodoService todoService, CancellationToken ct) =>
+app.MapPut("/api/todos/{id}", async (string id, UpdateTodoRequest request, IValidator<UpdateTodoRequest> validator, TodoService todoService, CancellationToken ct) =>
 {
-    if (request is null)
+    var validationResult = await validator.ValidateAsync(request, ct);
+    if (!validationResult.IsValid)
     {
-        return Results.BadRequest(new { error = "request body is required" });
-    }
-
-    if (request.Title is not null && (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200))
-    {
-        return Results.BadRequest(new { error = "title must be 1-200 characters when provided" });
-    }
-
-    if (request.Description?.Length > 1000)
-    {
-        return Results.BadRequest(new { error = "description must be 0-1000 characters" });
+        return Results.BadRequest(new { 
+            error = "Validation failed", 
+            errors = validationResult.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+        });
     }
 
     var todo = await todoService.UpdateAsync(id, request, ct);

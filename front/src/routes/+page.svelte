@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { health } from '$lib/api';
-	import { createChat } from '$lib/generated/chat/chat';
-	import type { ChatMessage } from '$lib/generated/models';
+	import { health, chat, type ChatMessage, type ChatResponse } from '$lib/api';
 	import { chatMessageSchema } from '$lib/schemas';
 	import { ZodError } from 'zod';
 
@@ -11,25 +9,7 @@
 	let error: string | null = $state(null);
 	let validationError: string | null = $state(null);
 	let isStub = $state(false);
-
-	// TanStack Query mutation for sending chat messages
-	const chatMutation = createChat({
-		mutation: {
-			onSuccess: (response: any) => {
-				// Extract the response data
-				const data = response?.data;
-				if (data?.reply) {
-					messages = [...messages, { role: 'assistant', content: data.reply }];
-					isStub = data.isStub ?? false;
-				}
-				error = null;
-				validationError = null;
-			},
-			onError: (err: any) => {
-				error = err?.message ?? 'Failed to send message';
-			}
-		}
-	});
+	let isSending = $state(false);
 
 	onMount(async () => {
 		try {
@@ -40,8 +20,8 @@
 		}
 	});
 
-	function send() {
-		if (chatMutation.isPending) return;
+	async function send() {
+		if (isSending) return;
 		
 		// Zodでバリデーション
 		try {
@@ -49,21 +29,32 @@
 			
 			// バリデーション成功: エラーをクリアして送信
 			validationError = null;
+			error = null;
 			
 			const userMsg: ChatMessage = { role: 'user', content: validated.message };
 			messages = [...messages, userMsg];
 			input = '';
+			isSending = true;
 			
-			// Send all messages including the new user message
-			chatMutation.mutate({
-				data: {
-					messages: messages
+			try {
+				// Send all messages including the new user message
+				const response = await chat({ messages: messages });
+				const data = response.data as any as ChatResponse;
+				
+				if (data?.reply) {
+					messages = [...messages, { role: 'assistant', content: data.reply }];
+					isStub = data.isStub ?? false;
 				}
-			});
+			} catch (err) {
+				error = 'Failed to send message. Please try again.';
+				console.error('Chat error:', err);
+			} finally {
+				isSending = false;
+			}
 		} catch (err) {
 			// バリデーションエラー: エラーメッセージを表示
 			if (err instanceof ZodError) {
-				validationError = err.errors[0]?.message || 'Invalid input';
+				validationError = err.issues[0]?.message || 'Invalid input';
 			}
 		}
 	}
@@ -112,8 +103,8 @@
 			autocomplete="off"
 			class:error={validationError}
 		/>
-		<button disabled={chatMutation.isPending}>
-			{chatMutation.isPending ? 'Sending…' : 'Send'}
+		<button disabled={isSending}>
+			{isSending ? 'Sending…' : 'Send'}
 		</button>
 	</form>
 </div>

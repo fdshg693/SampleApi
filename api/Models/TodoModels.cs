@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
 namespace SampleApi.Models;
@@ -15,22 +16,42 @@ public record TodoItem(
 // POST /api/todos リクエスト
 public class CreateTodoRequest
 {
+    /// <summary>
+    /// タイトル（1-200文字、必須）
+    /// </summary>
     [JsonPropertyName("title")]
+    [Required(ErrorMessage = "タイトルは必須です")]
+    [StringLength(200, MinimumLength = 1, ErrorMessage = "タイトルは1〜200文字以内で入力してください")]
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 説明（0-1000文字、任意）
+    /// </summary>
     [JsonPropertyName("description")]
+    [StringLength(1000, ErrorMessage = "説明は1000文字以内で入力してください")]
     public string? Description { get; set; }
 }
 
 // PUT /api/todos/{id} リクエスト
 public class UpdateTodoRequest
 {
+    /// <summary>
+    /// タイトル（1-200文字、任意）
+    /// </summary>
     [JsonPropertyName("title")]
+    [StringLength(200, MinimumLength = 1, ErrorMessage = "タイトルは1〜200文字以内で入力してください")]
     public string? Title { get; set; }
 
+    /// <summary>
+    /// 説明（0-1000文字、任意）
+    /// </summary>
     [JsonPropertyName("description")]
+    [StringLength(1000, ErrorMessage = "説明は1000文字以内で入力してください")]
     public string? Description { get; set; }
 
+    /// <summary>
+    /// 完了状態
+    /// </summary>
     [JsonPropertyName("isCompleted")]
     public bool? IsCompleted { get; set; }
 }

@@ -1,26 +1,55 @@
+// orval.config.ts
 import { defineConfig } from 'orval';
 
 export default defineConfig({
-  sampleapi: {
+  // ① APIクライアント（Svelteで使うので fetch ベース）
+  api: {
     input: {
-      target: 'https://localhost:7082/openapi/v1.json',
+      // 生成安定のためローカルファイル推奨
+      target: '../openapi-spec.json',
       validation: false,
     },
     output: {
       mode: 'tags-split',
-      target: 'src/lib/generated/api.ts',
+      target: 'src/lib/generated',        // ディレクトリ
       schemas: 'src/lib/generated/models',
-      client: 'svelte-query',
-      baseUrl: 'http://localhost:5073',
+      client: 'fetch', 
+    },
+  },
+
+  // ② Zod スキーマ（同じ OpenAPI を参照）
+  apiZod: {
+    input: {
+      target: '../openapi-spec.json',
+      validation: false,
+    },
+    output: {
+      mode: 'tags-split',
+      client: 'zod',                      // ← ここがポイント
+      target: 'src/lib/generated',        // クライアントと並べたい場合
+      fileExtension: '.zod.ts',           // pets.ts と pets.zod.ts を並置
       override: {
-        mutator: {
-          path: 'src/lib/generated/custom-instance.ts',
-          name: 'customInstance',
-        },
-        query: {
-          useQuery: true,
-          useMutation: true,
-          signal: true,
+        zod: {
+          generate: {
+            response: true,
+            body: true,
+            param: true,
+            query: true,
+            header: true,
+          },
+          strict: {
+            response: true,
+            body: true,
+            param: true,
+            query: true,
+            header: true,
+          },
+          // クエリパラメータを z.coerce.* にしたい場合
+          coerce: {
+            query: ['string', 'number', 'boolean', 'date'],
+          },
+          // ISO文字列の扱いを調整したい場合
+          dateTimeOptions: { local: true, offset: true, precision: 3 },
         },
       },
     },

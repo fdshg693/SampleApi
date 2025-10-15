@@ -1,13 +1,6 @@
 <script lang="ts">
-	import { 
-		createGetTodos, 
-		createCreateTodo, 
-		createUpdateTodo, 
-		createDeleteTodo,
-		getGetTodosQueryKey
-	} from '$lib/generated/todos/todos';
-	import type { TodoItem } from '$lib/api';
-	import { useQueryClient } from '@tanstack/svelte-query';
+	import { onMount } from 'svelte';
+	import { getTodos, createTodo, updateTodo, deleteTodo, type TodoItem, type GetTodosResponse } from '$lib/api';
 	import { createTodoSchema } from '$lib/schemas';
 	import { ZodError } from 'zod';
 
@@ -18,105 +11,37 @@
 	// バリデーションエラー
 	let validationErrors = $state<Record<string, string>>({});
 	
-	const queryClient = useQueryClient();
+	// State
+	let todos = $state<TodoItem[]>([]);
+	let loading = $state(false);
+	let error = $state<string | null>(null);
+	let isCreating = $state(false);
+	let updatingIds = $state<Set<string>>(new Set());
+	let deletingIds = $state<Set<string>>(new Set());
 
-	// Query: TODOリストを取得（自動キャッシング・再フェッチ）
-	const todosQuery = createGetTodos({
-		query: {
-			refetchOnMount: true,
-			staleTime: 30 * 1000, // 30秒間はキャッシュを使用
-		}
+	// Load todos on mount
+	onMount(() => {
+		loadTodos();
 	});
 
-	// Mutation: TODO作成
-	const createMutation = createCreateTodo({
-		mutation: {
-			onSuccess: () => {
-				// 成功したら TODO リストを再フェッチ
-				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
-				newTitle = '';
-				newDescription = '';
-				validationErrors = {}; // エラーをクリア
-			}
+	async function loadTodos() {
+		loading = true;
+		error = null;
+		try {
+			const response = await getTodos();
+			const data = response.data as any as GetTodosResponse;
+			todos = data.todos || [];
+		} catch (err) {
+			error = 'Failed to load todos';
+			console.error('Load todos error:', err);
+		} finally {
+			loading = false;
 		}
-	});
+	}
 
-	// Mutation: TODO更新
-	const updateMutation = createUpdateTodo({
-		mutation: {
-			onMutate: async (variables) => {
-				// 楽観的更新: UIを即座に更新
-				await queryClient.cancelQueries({ queryKey: getGetTodosQueryKey() });
-				
-				const previousTodos = queryClient.getQueryData(getGetTodosQueryKey());
-				
-				// 楽観的にキャッシュを更新
-				queryClient.setQueryData(getGetTodosQueryKey(), (old: any) => {
-					if (!old?.data?.todos) return old;
-					return {
-						...old,
-						data: {
-							...old.data,
-							todos: old.data.todos.map((t: TodoItem) =>
-								t.id === variables.id
-									? { ...t, ...variables.data, updatedAt: new Date().toISOString() }
-									: t
-							)
-						}
-					};
-				});
-				
-				return { previousTodos };
-			},
-			onError: (_err, _variables, context) => {
-				// エラー時はロールバック
-				if (context?.previousTodos) {
-					queryClient.setQueryData(getGetTodosQueryKey(), context.previousTodos);
-				}
-			},
-			onSettled: () => {
-				// 完了後は再フェッチして同期
-				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
-			}
-		}
-	});
-
-	// Mutation: TODO削除
-	const deleteMutation = createDeleteTodo({
-		mutation: {
-			onMutate: async (variables) => {
-				// 楽観的更新
-				await queryClient.cancelQueries({ queryKey: getGetTodosQueryKey() });
-				
-				const previousTodos = queryClient.getQueryData(getGetTodosQueryKey());
-				
-				queryClient.setQueryData(getGetTodosQueryKey(), (old: any) => {
-					if (!old?.data?.todos) return old;
-					return {
-						...old,
-						data: {
-							...old.data,
-							todos: old.data.todos.filter((t: TodoItem) => t.id !== variables.id)
-						}
-					};
-				});
-				
-				return { previousTodos };
-			},
-			onError: (_err, _variables, context) => {
-				if (context?.previousTodos) {
-					queryClient.setQueryData(getGetTodosQueryKey(), context.previousTodos);
-				}
-			},
-			onSettled: () => {
-				queryClient.invalidateQueries({ queryKey: getGetTodosQueryKey() });
-			}
-		}
-	});
-
-	function handleCreate(e: Event) {
+	async function handleCreate(e: Event) {
 		e.preventDefault();
-		if (createMutation.isPending) return;
+		if (isCreating) return;
 		
 		// Zodでバリデーション
 		try {
@@ -127,49 +52,92 @@
 			
 			// バリデーション成功: エラーをクリアして送信
 			validationErrors = {};
+			isCreating = true;
 			
-			createMutation.mutate({
-				data: {
+			try {
+				await createTodo({
 					title: validated.title,
 					description: validated.description || undefined
-				}
-			});
+				});
+				
+				// 成功したらリロード & フォームクリア
+				newTitle = '';
+				newDescription = '';
+				await loadTodos();
+			} catch (err) {
+				error = 'Failed to create todo';
+				console.error('Create todo error:', err);
+			} finally {
+				isCreating = false;
+			}
 		} catch (err) {
 			// バリデーションエラー: エラーメッセージを表示
 			if (err instanceof ZodError) {
 				const errors: Record<string, string> = {};
-				err.errors.forEach((error) => {
-					const path = error.path.join('.');
-					errors[path] = error.message;
+				err.issues.forEach((issue) => {
+					const path = issue.path.join('.');
+					errors[path] = issue.message;
 				});
 				validationErrors = errors;
 			}
 		}
 	}
 
-	function toggleComplete(todo: TodoItem) {
-		updateMutation.mutate({
-			id: todo.id,
-			data: {
+	async function toggleComplete(todo: TodoItem) {
+		if (updatingIds.has(todo.id)) return;
+		
+		updatingIds.add(todo.id);
+		updatingIds = updatingIds; // Trigger reactivity
+		
+		try {
+			await updateTodo(todo.id, {
 				isCompleted: !todo.isCompleted
-			}
-		});
+			});
+			
+			// Optimistically update local state
+			todos = todos.map(t => 
+				t.id === todo.id 
+					? { ...t, isCompleted: !t.isCompleted, updatedAt: new Date().toISOString() }
+					: t
+			);
+		} catch (err) {
+			error = 'Failed to update todo';
+			console.error('Update todo error:', err);
+			// Reload to get correct state
+			await loadTodos();
+		} finally {
+			updatingIds.delete(todo.id);
+			updatingIds = updatingIds; // Trigger reactivity
+		}
 	}
 
-	function handleDelete(id: string) {
+	async function handleDelete(id: string) {
 		if (!confirm('Are you sure you want to delete this todo?')) return;
-		deleteMutation.mutate({ id });
+		if (deletingIds.has(id)) return;
+		
+		deletingIds.add(id);
+		deletingIds = deletingIds; // Trigger reactivity
+		
+		try {
+			await deleteTodo(id);
+			
+			// Optimistically remove from local state
+			todos = todos.filter(t => t.id !== id);
+		} catch (err) {
+			error = 'Failed to delete todo';
+			console.error('Delete todo error:', err);
+			// Reload to get correct state
+			await loadTodos();
+		} finally {
+			deletingIds.delete(id);
+			deletingIds = deletingIds; // Trigger reactivity
+		}
 	}
 
 	function formatDate(dateString: string): string {
 		const date = new Date(dateString);
 		return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
-
-	// Reactive derivations using $derived
-	const todos = $derived((todosQuery.data as any)?.data?.todos || []);
-	const loading = $derived(todosQuery.isLoading);
-	const error = $derived(todosQuery.error || createMutation.error || updateMutation.error || deleteMutation.error);
 </script>
 
 <svelte:head>
@@ -185,7 +153,7 @@
 	</header>
 
 	{#if error}
-		<div class="error">{(error as any)?.message ?? 'An error occurred'}</div>
+		<div class="error">{error}</div>
 	{/if}
 
 	<section class="create-section">
@@ -215,8 +183,8 @@
 					<span class="error-message">{validationErrors['description']}</span>
 				{/if}
 			</div>
-			<button type="submit" disabled={createMutation.isPending}>
-				{createMutation.isPending ? 'Creating...' : '➕ Add TODO'}
+			<button type="submit" disabled={isCreating}>
+				{isCreating ? 'Creating...' : '➕ Add TODO'}
 			</button>
 		</form>
 	</section>
