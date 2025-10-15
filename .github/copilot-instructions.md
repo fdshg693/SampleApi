@@ -3,7 +3,9 @@
 This repo is a minimal full‑stack chat + TODO app:
 - Backend: ASP.NET Core Minimal API (net9.0) under `api/`
 - Frontend: SvelteKit + Vite under `front/`
-- Local dev flow: Vite dev server proxies `/api/*` to the .NET API over HTTPS.
+- Local dev flow: Vite dev server proxies `/api/*` to the .NET API over HTTPS
+- Validation: FluentValidation (backend) + Zod (frontend) with unified error format
+- Code generation: Orval generates TypeScript client + Zod schemas from OpenAPI spec
 
 ## Architecture and data flow
 - API endpoints are defined in `api/Program.cs`:
@@ -57,21 +59,36 @@ Recommended dev steps (Windows PowerShell):
 
 ## Useful file map
 - Backend: 
-  - `api/Program.cs` - Main entry point, endpoint definitions, DI configuration, CORS setup
+  - `api/Program.cs` - Main entry point, endpoint definitions, DI configuration, CORS setup, FluentValidation registration
   - `api/Services/AiChatService.cs` - OpenAI Chat Completions integration with fallback stub
   - `api/Services/TodoService.cs` - In-memory TODO CRUD operations using ConcurrentDictionary
   - `api/Models/ChatModels.cs` - Chat request/response DTOs (ChatRequest, ChatResponse, ChatMessage)
   - `api/Models/TodoModels.cs` - TODO DTOs (TodoItem, CreateTodoRequest, UpdateTodoRequest, GetTodosResponse)
+  - `api/Validators/ChatValidators.cs` - FluentValidation validators for chat (ChatRequestValidator, ChatMessageValidator)
+  - `api/Validators/TodoValidators.cs` - FluentValidation validators for todos (CreateTodoRequestValidator, UpdateTodoRequestValidator)
   - `api/Properties/launchSettings.json` - Launch profiles with port configurations (7082 HTTPS, 5073 HTTP)
   - `api/appsettings.json` / `api/appsettings.Development.json` - Configuration including OpenAI settings
 - Frontend:
   - `front/src/lib/api.ts` - Centralized API client functions (health, sendChat, getTodos, createTodo, updateTodo, deleteTodo)
+  - `front/src/lib/schemas.ts` - Zod validation schemas (re-exports from generated .zod.ts files)
   - `front/src/lib/generated/` - Orval-generated TypeScript client code (DO NOT EDIT MANUALLY)
+  - `front/src/lib/generated/chat/chat.ts` - Chat API client (fetch)
+  - `front/src/lib/generated/chat/chat.zod.ts` - Chat Zod schemas for validation
+  - `front/src/lib/generated/todos/todos.ts` - TODO API client (fetch)
+  - `front/src/lib/generated/todos/todos.zod.ts` - TODO Zod schemas for validation
+  - `front/src/lib/generated/models/` - TypeScript type definitions for all DTOs
   - `front/src/routes/+page.svelte` - Chat UI with message history and form submission
   - `front/src/routes/todos/+page.svelte` - TODO list UI with create/update/delete operations
   - `front/vite.config.ts` - Vite configuration with proxy to backend HTTPS endpoint
-  - `front/orval.config.ts` - Orval configuration for API client generation from OpenAPI spec
+  - `front/orval.config.ts` - Orval configuration for API client + Zod schema generation from OpenAPI spec
   - `front/package.json` - Scripts including `generate:api` for Orval, dev/build commands
+- Documentation:
+  - `docs/FluentValidation.md` - FluentValidation setup and integration with Swagger/OpenAPI
+  - `docs/orval.md` - Orval configuration details for dual generation (fetch + Zod)
+  - `docs/zod.md` - Zod usage patterns and validation examples
+  - `docs/openapi.md` - OpenAPI specification details
+- Root:
+  - `openapi-spec.json` - Generated OpenAPI specification (used by Orval for stable generation)
 
 ## Technical implementation details
 
@@ -80,6 +97,12 @@ Recommended dev steps (Windows PowerShell):
 - **Dependency injection**: Services registered in `Program.cs` using `AddSingleton`
 - **OpenAPI**: Generated using `AddOpenApi()` and exposed at `/openapi/v1.json` (Development only)
 - **Swagger UI**: Available at `/swagger` in Development mode using `AddSwaggerGen()` and `UseSwaggerUI()`
+- **Validation**: FluentValidation with `MicroElements.Swashbuckle.FluentValidation` bridge for OpenAPI schema enrichment
+- **Validation flow**: 
+  1. Validators auto-registered via `AddValidatorsFromAssemblyContaining<>`
+  2. FluentValidation rules reflected in OpenAPI/Swagger via `AddFluentValidationRulesToSwagger()`
+  3. Endpoints inject `IValidator<T>` and call `ValidateAsync()` before processing
+  4. Validation errors returned as: `{ error: "Validation failed", errors: [{ field, message }] }`
 - **CORS**: Default policy allows `localhost:5173` (Vite) and `localhost:3000` (React/Next) with credentials
 - **HTTPS**: Disabled redirection in Development to avoid proxy issues; production uses HTTPS redirection
 
@@ -103,20 +126,32 @@ Recommended dev steps (Windows PowerShell):
 - **Routing**: File-based routing using `src/routes/` directory
 - **State management**: Svelte 5 reactivity with `$state()` runes
 - **API calls**: Centralized in `api.ts` using fetch with JSON serialization
+- **Validation**: Zod schemas generated from OpenAPI spec, re-exported in `schemas.ts`
 - **Proxy setup**: Vite proxies `/api` to `https://localhost:7082` with SSL verification disabled in dev
-- **Type generation**: Orval reads OpenAPI spec and generates TypeScript client code with svelte-query integration
+- **Type generation**: Orval reads OpenAPI spec and generates TypeScript client code + Zod schemas
 
 ### Orval configuration
-- **Input**: `https://localhost:7082/openapi/v1.json` with validation disabled (SSL cert issue)
+- **Dual generation**: Two separate configurations in `orval.config.ts`
+  1. `api`: Generates fetch-based API client (`tags-split` mode)
+  2. `apiZod`: Generates Zod validation schemas with `.zod.ts` extension
+- **Input**: `../openapi-spec.json` (local file for stable generation, avoids SSL issues)
 - **Output mode**: `tags-split` - generates separate files per OpenAPI tag
-- **Client**: `svelte-query` - generates TanStack Query hooks for Svelte
-- **Base URL**: `http://localhost:5073` (can be overridden by custom instance)
-- **Custom instance**: `src/lib/generated/custom-instance.ts` - allows axios/fetch customization
+- **Client types**: 
+  - `api` config: `client: 'fetch'` - generates fetch-based client functions
+  - `apiZod` config: `client: 'zod'` - generates Zod schemas with strict mode
+- **Zod options**:
+  - `generate`: Generates schemas for response, body, param, query, header
+  - `strict`: Enables strict validation for all schema types
+  - `coerce`: Auto-coerces query params (string, number, boolean, date)
+  - `dateTimeOptions`: Handles ISO string with local/offset/precision settings
 - **Generated structure**: 
-  - `src/lib/generated/chat/chat.ts` - Chat endpoint hooks
-  - `src/lib/generated/todos/todos.ts` - TODO endpoint hooks
-  - `src/lib/generated/health/health.ts` - Health endpoint hooks
+  - `src/lib/generated/chat/chat.ts` - Chat API client (fetch)
+  - `src/lib/generated/chat/chat.zod.ts` - Chat Zod schemas (chatBody, chatResponse, etc.)
+  - `src/lib/generated/todos/todos.ts` - TODO API client (fetch)
+  - `src/lib/generated/todos/todos.zod.ts` - TODO Zod schemas (createTodoBody, updateTodoBody, etc.)
+  - `src/lib/generated/health/health.ts` - Health API client (fetch)
   - `src/lib/generated/models/` - TypeScript interfaces for all DTOs
+- **Usage pattern**: Import from `schemas.ts` which re-exports generated Zod schemas for easy consumption
 
 ## Examples
 - Example chat request body (frontend and API tests):
@@ -150,36 +185,11 @@ Recommended dev steps (Windows PowerShell):
 ### Regenerating API client (Orval)
 ```powershell
 cd front
+pnpm generate:api
+```
+Note: Uses local `openapi-spec.json` file (no SSL issues). If generating from live API:
+```powershell
 $env:NODE_TLS_REJECT_UNAUTHORIZED='0'  # Disable SSL verification for self-signed cert
 pnpm generate:api
 Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
 ```
-
-### Changing ports
-1. Update `api/Properties/launchSettings.json` - modify `applicationUrl` in profile
-2. Update `front/vite.config.ts` - modify proxy `target` URL
-3. Update `api/Program.cs` - add new origin to CORS if using different frontend port
-4. Update `front/orval.config.ts` - modify `input.target` URL for code generation
-5. Restart both dev servers
-
-### Debugging backend
-- Use VS Code debugger with `.vscode/launch.json` configuration
-- Or attach to process: Run API with `dotnet run`, then attach debugger
-- Logs appear in terminal and Application Insights (if configured)
-- Swagger UI available at `https://localhost:7082/swagger` for manual testing
-
-### Debugging frontend
-- Browser DevTools for client-side debugging
-- Vite dev server shows HMR updates and build errors
-- Network tab shows API requests/responses
-- Svelte DevTools extension for component inspection
-
-Notes for AI agents
-- Prefer editing or adding files within the folders noted above rather than scattering code elsewhere.
-- When adding new endpoints, update CORS origins only if a new dev origin is required.
-- If you change backend ports, also update `front/vite.config.ts` proxy target and `api/Properties/launchSettings.json` consistently.
-- Never manually edit files in `front/src/lib/generated/` - regenerate with Orval instead.
-- Keep request/response DTOs in `api/Models/` with proper `System.Text.Json` attributes for serialization.
-- Use `WithOpenApi()` on all endpoints to ensure OpenAPI spec generation and Orval compatibility.
-- TODO service is in-memory only - data resets on API restart. For persistence, replace ConcurrentDictionary with database calls.
-- OpenAI integration gracefully degrades to stub responses - app remains functional without API key.

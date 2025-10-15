@@ -7,7 +7,8 @@
 - **バックエンド**: ASP.NET Core Minimal API (.NET 9) - REST API、OpenAI Chat Completions 統合、インメモリTODO管理
 - **フロントエンド**: SvelteKit + Vite - モダンなUIフレームワークと高速開発環境
 - **API連携**: Vite開発サーバーが `/api/*` を .NET API（HTTPS）にプロキシ
-- **型安全**: Orval を使用して OpenAPI 仕様から TypeScript クライアントを自動生成
+- **型安全**: Orval を使用して OpenAPI 仕様から TypeScript クライアントと Zod スキーマを自動生成
+- **バリデーション**: バックエンド（FluentValidation）とフロントエンド（Zod）の両方でリクエストを検証
 - **AI統合**: OpenAI Chat Completions API（キー未設定時はスタブ応答で動作確認可能）
 
 ## 📁 ディレクトリ構成
@@ -17,21 +18,31 @@ SampleApi/
 ├── api/              # ASP.NET Core Minimal API (.NET 9)
 │   ├── Models/       # リクエスト/レスポンスDTO
 │   ├── Services/     # ビジネスロジック（AiChatService, TodoService）
+│   ├── Validators/   # FluentValidationバリデーター
 │   ├── Properties/   # launchSettings.json（ポート設定）
 │   └── Program.cs    # エンドポイント定義とDI設定
 ├── front/            # SvelteKit + Vite フロントエンド
 │   ├── src/
 │   │   ├── lib/
 │   │   │   ├── api.ts             # APIクライアント関数
+│   │   │   ├── schemas.ts         # Zodスキーマ（再エクスポート）
 │   │   │   └── generated/         # Orvalによる自動生成コード
+│   │   │       ├── chat/          # - chat.ts, chat.zod.ts
+│   │   │       ├── todos/         # - todos.ts, todos.zod.ts
+│   │   │       ├── health/        # - health.ts
+│   │   │       └── models/        # - TypeScript型定義
 │   │   └── routes/
 │   │       ├── +page.svelte       # チャット画面
 │   │       └── todos/+page.svelte # TODO管理画面
+│   ├── orval.config.ts            # Orval設定（fetch + Zod生成）
 │   └── vite.config.ts             # Viteプロキシ設定
-├── docs/             # ドキュメント（OpenAPI, Orval設定など）
+├── docs/             # ドキュメント（OpenAPI, Orval, FluentValidation設定など）
+├── architecture/     # アーキテクチャドキュメント
 ├── feature/          # 機能仕様・実装メモ
+├── openapi-spec.json # OpenAPI仕様書（生成済み）
 └── .github/
     ├── copilot-instructions.md    # Copilot向けテクニカルガイド
+    ├── prompts/                   # プロンプトテンプレート
     └── workflows/                 # GitHub Actions（Azure Web App デプロイ）
 ```
 
@@ -117,18 +128,29 @@ pnpm dev      # または npm run dev
 
 ## 🔄 APIクライアントの自動生成（Orval）
 
-OpenAPI仕様から TypeScript クライアントコードを自動生成できます:
+OpenAPI仕様から TypeScript クライアントコードと Zod バリデーションスキーマを自動生成できます:
 
 ```powershell
 cd front
 
-# SSL証明書検証を一時的に無効化してAPIクライアント生成
-$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
+# APIクライアントとZodスキーマを生成
 pnpm generate:api
-Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
 ```
 
-生成されたファイルは `front/src/lib/generated/` に配置されます。
+**生成されるファイル**:
+- `src/lib/generated/chat/chat.ts` - Chat API クライアント（fetch）
+- `src/lib/generated/chat/chat.zod.ts` - Chat Zod スキーマ
+- `src/lib/generated/todos/todos.ts` - TODO API クライアント（fetch）
+- `src/lib/generated/todos/todos.zod.ts` - TODO Zod スキーマ
+- `src/lib/generated/health/health.ts` - Health API クライアント
+- `src/lib/generated/models/` - TypeScript 型定義
+
+**Orval設定** (`orval.config.ts`):
+- **api**: fetch ベースの API クライアント生成（tags-split モード）
+- **apiZod**: Zod スキーマ生成（同じタグ分割、`.zod.ts` 拡張子）
+- **入力**: `../openapi-spec.json`（ローカルファイル使用で安定動作）
+
+**注意**: 生成されたファイルは手動編集せず、`pnpm generate:api` で再生成してください。
 
 ## 🔗 フロントエンドとバックエンドの連携
 
@@ -371,15 +393,31 @@ setx OPENAI_API_KEY "sk-..."
 }
 ```
 
-### 問題: Orval APIクライアント生成時のSSLエラー
+### 問題: Orval APIクライアント生成時のエラー
 
-**解決策**: SSL証明書検証を一時的に無効化
-```powershell
-cd front
-$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
-pnpm generate:api
-Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
-```
+**原因**: OpenAPI仕様ファイルが見つからない、またはバックエンドが起動していない
+
+**解決策**:
+1. **ローカルファイルを使用（推奨）**: 
+   ```powershell
+   # プロジェクトルートにopenapi-spec.jsonが存在することを確認
+   # orval.config.tsで target: '../openapi-spec.json' を使用
+   cd front
+   pnpm generate:api
+   ```
+
+2. **API経由で生成する場合**:
+   ```powershell
+   # バックエンドを起動
+   cd api
+   dotnet run
+   
+   # 別ターミナルでフロントエンド生成
+   cd front
+   $env:NODE_TLS_REJECT_UNAUTHORIZED='0'  # SSL証明書検証を無効化
+   pnpm generate:api
+   Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
+   ```
 
 ## 🚀 デプロイ
 
@@ -395,20 +433,38 @@ Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
 - **テクニカルガイド**: `.github/copilot-instructions.md` - Copilot向けの詳細な実装ガイド
 - **OpenAPI仕様**: `docs/openapi.md` - API仕様の詳細
 - **Orval設定**: `docs/orval.md` - APIクライアント自動生成の設定
+- **FluentValidation設定**: `docs/FluentValidation.md` - バックエンドバリデーションの設定
+- **Zod設定**: `docs/zod.md` - フロントエンドバリデーションの設定
 - **機能仕様**: `feature/` - 各機能の仕様書と実装メモ
+- **アーキテクチャ**: `architecture/` - アーキテクチャドキュメント
 
 ## 🤝 開発規約
 
-- **バックエンド**:
-  - 新規エンドポイントは `api/Program.cs` に Minimal API スタイルで追加
-  - ビジネスロジックは `api/Services/` 配下のサービスクラスに実装
-  - リクエスト/レスポンスDTOは `api/Models/` に配置
+### バックエンド
+- 新規エンドポイントは `api/Program.cs` に Minimal API スタイルで追加
+- ビジネスロジックは `api/Services/` 配下のサービスクラスに実装
+- リクエスト/レスポンスDTOは `api/Models/` に配置
+- バリデーションロジックは `api/Validators/` に FluentValidation クラスとして実装
+- エンドポイントには必ず `.WithOpenApi()` を追加してOpenAPI仕様に含める
+- バリデーターは `Program.cs` で自動登録され、エンドポイントで `IValidator<T>` を注入
 
-- **フロントエンド**:
-  - API呼び出しは必ず `front/src/lib/api.ts` 経由で実行
-  - 新規API関数を追加したら、Svelteコンポーネントからインポート
-  - `/api` パスプレフィックスを維持（Viteプロキシ対象）
+### フロントエンド
+- API呼び出しは必ず `front/src/lib/api.ts` 経由で実行
+- 新規API関数を追加したら、Svelteコンポーネントからインポート
+- `/api` パスプレフィックスを維持（Viteプロキシ対象）
+- フォームバリデーションには `front/src/lib/schemas.ts` の Zod スキーマを使用
+- 生成された `.zod.ts` ファイルを直接使うか、`schemas.ts` で再エクスポート
 
-- **型安全**:
-  - OpenAPI仕様を更新したら `pnpm generate:api` を実行
-  - 生成されたクライアントコードは手動編集しない
+### 型安全とバリデーション
+- OpenAPI仕様を更新したら `pnpm generate:api` を実行
+- 生成されたクライアントコード (`generated/`) は手動編集しない
+- バックエンドで FluentValidation ルールを追加したら、Swagger で確認し必要に応じて Zod スキーマも更新
+- バリデーションエラーは統一フォーマットで返却: `{ error, errors: [{ field, message }] }`
+
+### コード生成フロー
+1. `api/Models/` でDTOを定義
+2. `api/Validators/` で FluentValidation バリデーターを作成
+3. `api/Program.cs` でエンドポイントを追加（`.WithOpenApi()` 必須）
+4. バックエンドを起動して OpenAPI 仕様を生成/エクスポート
+5. `cd front && pnpm generate:api` でクライアントと Zod スキーマを生成
+6. フロントエンドで生成されたクライアント/スキーマを使用
