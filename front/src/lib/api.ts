@@ -1,30 +1,36 @@
-export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
-export type ChatRequest = { messages: ChatMessage[]; model?: string };
+/**
+ * API Client - Centralized API calls for the frontend
+ * 
+ * This file now uses the auto-generated Orval client from OpenAPI spec.
+ * To regenerate the client after backend API changes, run: pnpm generate:api
+ */
+
+// Re-export all generated types and API functions
+export * from './generated';
+
+// Import generated functions for wrapper compatibility
+import { 
+	chat as generatedChat,
+	health as generatedHealth,
+	getTodos as generatedGetTodos,
+	createTodo as generatedCreateTodo,
+	updateTodo as generatedUpdateTodo,
+	deleteTodo as generatedDeleteTodo
+} from './generated';
+
+// Re-export types for backward compatibility
+import type { 
+	ChatMessage,
+	ChatRequest,
+	CreateTodoRequest,
+	UpdateTodoRequest
+} from './generated';
+
+export type { ChatMessage, ChatRequest, CreateTodoRequest, UpdateTodoRequest };
+
+// Legacy response types (for backward compatibility)
 export type ChatResponse = { reply: string; isStub: boolean };
 
-const BASE = '';
-
-export async function sendChat(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
-	const res = await fetch(`${BASE}/api/chat`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request),
-		signal
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`API error ${res.status}: ${text}`);
-	}
-	return res.json();
-}
-
-export async function health(signal?: AbortSignal) {
-	const res = await fetch(`${BASE}/api/health`, { signal });
-	if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-	return res.json() as Promise<{ status: string; time: string }>; 
-}
-
-// TODO API types
 export type TodoItem = {
 	id: string;
 	title: string;
@@ -34,70 +40,40 @@ export type TodoItem = {
 	updatedAt: string;
 };
 
-export type CreateTodoRequest = {
-	title: string;
-	description?: string;
-};
-
-export type UpdateTodoRequest = {
-	title?: string;
-	description?: string;
-	isCompleted?: boolean;
-};
-
 export type GetTodosResponse = {
 	todos: TodoItem[];
 	total: number;
 };
 
-// GET /api/todos
+// Wrapper functions that maintain backward compatibility with existing code
+// These extract the data from the generated client's response format
+
+export async function sendChat(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
+	const response = await generatedChat(request, { signal });
+	// The generated client returns the full response; extract data as needed
+	return response.data as any as ChatResponse;
+}
+
+export async function health(signal?: AbortSignal) {
+	const response = await generatedHealth({ signal });
+	return response.data as any as { status: string; time: string };
+}
+
 export async function getTodos(signal?: AbortSignal): Promise<GetTodosResponse> {
-	const res = await fetch(`${BASE}/api/todos`, { signal });
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`API error ${res.status}: ${text}`);
-	}
-	return res.json();
+	const response = await generatedGetTodos({ signal });
+	return response.data as any as GetTodosResponse;
 }
 
-// POST /api/todos
 export async function createTodo(request: CreateTodoRequest, signal?: AbortSignal): Promise<TodoItem> {
-	const res = await fetch(`${BASE}/api/todos`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request),
-		signal
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`API error ${res.status}: ${text}`);
-	}
-	return res.json();
+	const response = await generatedCreateTodo(request, { signal });
+	return response.data as any as TodoItem;
 }
 
-// PUT /api/todos/{id}
 export async function updateTodo(id: string, request: UpdateTodoRequest, signal?: AbortSignal): Promise<TodoItem> {
-	const res = await fetch(`${BASE}/api/todos/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request),
-		signal
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`API error ${res.status}: ${text}`);
-	}
-	return res.json();
+	const response = await generatedUpdateTodo(id, request, { signal });
+	return response.data as any as TodoItem;
 }
 
-// DELETE /api/todos/{id}
 export async function deleteTodo(id: string, signal?: AbortSignal): Promise<void> {
-	const res = await fetch(`${BASE}/api/todos/${id}`, {
-		method: 'DELETE',
-		signal
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`API error ${res.status}: ${text}`);
-	}
+	await generatedDeleteTodo(id, { signal });
 }
