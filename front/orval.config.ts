@@ -11,7 +11,7 @@ export default defineConfig({
       target: 'src/lib/generated/api.ts',
       schemas: 'src/lib/generated/models',
       client: 'fetch',
-      baseUrl: '',
+      baseUrl: 'http://localhost:5073',
       override: {
         mutator: {
           path: 'src/lib/generated/custom-instance.ts',
