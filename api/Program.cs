@@ -57,6 +57,10 @@ builder.Services.AddSingleton<AiChatService>();
 // TODO service (Redis version)
 builder.Services.AddSingleton<TodoService>();
 
+// Chat cache + Rate limit services
+builder.Services.AddSingleton<ChatCacheService>();
+builder.Services.AddSingleton<RateLimitService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -88,7 +92,15 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", time = DateTimeO
    .WithOpenApi();
 
 // Chat endpoint: accepts { messages: [{ role, content }], model? } and returns { reply, isStub }
-app.MapPost("/api/chat", async (ChatRequest request, IValidator<ChatRequest> validator, AiChatService ai, CancellationToken ct) =>
+app.MapPost("/api/chat", async (
+    HttpContext http,
+    ChatRequest request,
+    IValidator<ChatRequest> validator,
+    AiChatService ai,
+    ChatCacheService chatCache,
+    RateLimitService rateLimit,
+    IConfiguration config,
+    CancellationToken ct) =>
 {
     var validationResult = await validator.ValidateAsync(request, ct);
     if (!validationResult.IsValid)
@@ -99,7 +111,35 @@ app.MapPost("/api/chat", async (ChatRequest request, IValidator<ChatRequest> val
         });
     }
 
+    // Optional session id from header for caching and rate limiting
+    var sessionId = http.Request.Headers["X-Session-Id"].FirstOrDefault();
+
+    // Rate limiting (defaults: 60 req per 60s)
+    var maxReq = config.GetValue<int?>("RateLimit:Chat:MaxRequests") ?? 60;
+    var windowSec = config.GetValue<int?>("RateLimit:Chat:WindowSeconds") ?? 60;
+    var clientId = !string.IsNullOrWhiteSpace(sessionId)
+        ? $"chat:{sessionId}"
+        : $"chat:{http.Connection.RemoteIpAddress?.ToString() ?? "anonymous"}";
+
+    var allowed = await rateLimit.IsAllowedAsync(clientId, maxReq, TimeSpan.FromSeconds(windowSec));
+    if (!allowed)
+    {
+        http.Response.Headers["Retry-After"] = windowSec.ToString();
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
     var response = await ai.GetChatCompletionAsync(request, ct);
+
+    // Cache chat history if session is present (store last 100 messages with assistant reply appended)
+    if (!string.IsNullOrWhiteSpace(sessionId))
+    {
+        var history = new List<ChatMessage>(request.Messages)
+        {
+            new ChatMessage("assistant", response.Reply)
+        };
+        // fire-and-forget with best-effort; but await to surface errors during dev if needed
+        await chatCache.SaveChatHistoryAsync(sessionId!, history, maxCount: 100);
+    }
     return Results.Ok(response);
 })
 .WithName("Chat")
@@ -181,6 +221,26 @@ app.MapDelete("/api/todos/{id}", async (string id, TodoService todoService, Canc
 .WithTags("Todos")
 .WithSummary("Delete a TODO item")
 .WithDescription("Permanently removes a TODO item from the in-memory store. Returns 204 No Content on success, 404 if the item is not found.")
+.WithOpenApi();
+
+// Redis health endpoint
+app.MapGet("/api/health/redis", (RedisConnectionService redis) =>
+{
+    try
+    {
+        var db = redis.GetDatabase();
+        var latency = db.Ping();
+        return Results.Ok(new { status = "ok", latencyMs = latency.TotalMilliseconds });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(title: "redis unhealthy", detail: ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+})
+.WithName("HealthRedis")
+.WithTags("Health")
+.WithSummary("Redis health check")
+.WithDescription("Pings Redis and returns latency in milliseconds. Returns 503 if connection fails.")
 .WithOpenApi();
 
 app.Run();
