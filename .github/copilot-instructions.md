@@ -6,10 +6,12 @@ This repo is a minimal full‑stack chat + TODO app:
 - Local dev flow: Vite dev server proxies `/api/*` to the .NET API over HTTPS
 - Validation: FluentValidation (backend) + Zod (frontend) with unified error format
 - Code generation: Orval generates TypeScript client + Zod schemas from OpenAPI spec
+- Data layer: Redis (Docker) for TODO persistence, chat history cache, and sliding-window rate limiting
 
 ## Architecture and data flow
 - API endpoints are defined in `api/Program.cs`:
   - `GET /api/health` returns `{ status, time }` for smoke tests.
+  - `GET /api/health/redis` returns `{ status: 'ok', latencyMs }` on success or 503 when Redis is unavailable.
   - `POST /api/chat` accepts `{ messages: [{ role, content }], model? }` and returns `{ reply, isStub }`.
   - `GET /api/todos` returns `{ todos: [...], total }` for all TODO items.
   - `POST /api/todos` accepts `{ title, description? }` and returns the created `TodoItem`; validates `title` is non‑empty.
@@ -19,8 +21,12 @@ This repo is a minimal full‑stack chat + TODO app:
   - Tries OpenAI Chat Completions using API key from `OpenAI:ApiKey` or env `OPENAI_API_KEY`; model from `request.Model` or `OpenAI:Model` (default `gpt-4o-mini`).
   - On missing key or errors, falls back to a stub echo; sets `IsStub = true` and includes the last user message.
 - TODO logic is in `api/Services/TodoService.cs`:
-  - In‑memory CRUD using `ConcurrentDictionary<string, TodoItem>`.
+  - Redis-based CRUD. Keys: `SampleApi:todo:{id}` (JSON), Set `SampleApi:todos:all` holds IDs.
   - Methods: `GetAllAsync()`, `GetByIdAsync(id)`, `CreateAsync(request)`, `UpdateAsync(id, request)`, `DeleteAsync(id)`.
+- Chat cache is in `api/Services/ChatCacheService.cs`:
+  - Stores per-session chat history at `SampleApi:chat:{sessionId}` with TTL (default 24h). Use `X-Session-Id` header to enable.
+- Rate limiting is in `api/Services/RateLimitService.cs`:
+  - Sliding-window limiter using Redis SortedSet at `SampleApi:ratelimit:{clientId}`. Defaults: 60 req per 60s for chat.
 - Shared request/response types live in `api/Models/ChatModels.cs` and `api/Models/TodoModels.cs`.
 - Frontend API calls are centralized in `front/src/lib/api.ts` with a blank `BASE` (same‑origin). During dev, Vite's proxy forwards `/api` to `https://localhost:7082` (see `front/vite.config.ts`). The main page is `front/src/routes/+page.svelte` (chat) and `front/src/routes/todos/+page.svelte` (TODO list).
 
@@ -29,6 +35,7 @@ This repo is a minimal full‑stack chat + TODO app:
   - HTTPS `https://localhost:7082` and HTTP `http://localhost:5073`.
 - CORS is enabled for `http://localhost:5173` (Vite) and `http://localhost:3000` (React/Next) in `Program.cs`.
 - OpenAPI is exposed in Development only at `/openapi/v1.json`.
+- Redis is required for API start (connection string in appsettings). Use `docker-compose up -d redis` in project root.
 
 Recommended dev steps (Windows PowerShell):
 1) API
@@ -45,6 +52,7 @@ Recommended dev steps (Windows PowerShell):
 - Keep `/api` as the path prefix for server routes to remain covered by the Vite proxy.
 - Error semantics: 
   - `/api/chat` returns 400 when `messages` is missing/empty; service falls back to stub with `isStub: true` on provider errors.
+  - `/api/chat` may return 429 (rate limited). `Retry-After` header indicates seconds to wait. Limiter key uses `X-Session-Id` if present, otherwise remote IP.
   - `/api/todos` POST returns 400 when `title` is null/empty.
   - `/api/todos/{id}` PUT/DELETE return 404 when the ID doesn't exist.
 
@@ -53,6 +61,11 @@ Recommended dev steps (Windows PowerShell):
   - appsettings: `OpenAI:ApiKey`, `OpenAI:Model`
   - or environment: `OPENAI_API_KEY`
   - Effective precedence: appsettings > environment. Default model: `gpt-4o-mini`.
+ - Redis via `StackExchange.Redis`:
+   - Connection string: `Redis:ConnectionString` (e.g., `localhost:6379,abortConnect=false`)
+   - Instance name/prefix: `Redis:InstanceName` (default `SampleApi:`)
+   - Chat cache TTL hours: `ChatCache:Hours` (default 24)
+   - Chat rate limit: `RateLimit:Chat:MaxRequests`, `RateLimit:Chat:WindowSeconds` (defaults 60/60)
 
 ## CI/CD
 - GitHub Actions workflow in `.github/workflows/master_seiwan-sampleapi.yml` builds with .NET 9 and publishes to Azure Web App `seiwan-sampleApi` on manual dispatch.
@@ -87,6 +100,7 @@ Recommended dev steps (Windows PowerShell):
   - `docs/orval.md` - Orval configuration details for dual generation (fetch + Zod)
   - `docs/zod.md` - Zod usage patterns and validation examples
   - `docs/openapi.md` - OpenAPI specification details
+  - `docs/redis.md` - Redis operations and troubleshooting
 - Root:
   - `openapi-spec.json` - Generated OpenAPI specification (used by Orval for stable generation)
 
@@ -105,6 +119,7 @@ Recommended dev steps (Windows PowerShell):
   4. Validation errors returned as: `{ error: "Validation failed", errors: [{ field, message }] }`
 - **CORS**: Default policy allows `localhost:5173` (Vite) and `localhost:3000` (React/Next) with credentials
 - **HTTPS**: Disabled redirection in Development to avoid proxy issues; production uses HTTPS redirection
+- **Redis**: Single shared connection via `RedisConnectionService`; required to boot API. Services using Redis: `TodoService`, `ChatCacheService`, `RateLimitService`. Health endpoint at `/api/health/redis`.
 
 ### AiChatService implementation
 - Uses `HttpClient` to call OpenAI Chat Completions API (`https://api.openai.com/v1/chat/completions`)
@@ -115,11 +130,11 @@ Recommended dev steps (Windows PowerShell):
 - Content-Type: `application/json`
 
 ### TodoService implementation
-- **Storage**: `ConcurrentDictionary<string, TodoItem>` for thread-safe in-memory storage
-- **ID generation**: Uses `Guid.NewGuid().ToString("N")[..8]` for short alphanumeric IDs
-- **Async pattern**: All methods return `Task<T>` even though operations are synchronous (for future database integration)
-- **Validation**: `CreateAsync` throws `ArgumentException` if title is null/whitespace
-- **Thread safety**: Dictionary operations use TryGetValue, TryAdd, TryUpdate, TryRemove
+- **Storage**: Redis JSON at `SampleApi:todo:{id}` plus Set `SampleApi:todos:all` for listing
+- **ID generation**: `Guid.NewGuid().ToString()`
+- **Async pattern**: All methods are async IO to Redis
+- **Validation**: Request DTOs validated by FluentValidation before service call
+- **Transactions**: Uses Redis transactions for create/delete multi-key updates
 
 ### Frontend architecture
 - **Framework**: SvelteKit with Vite as build tool and dev server
@@ -129,6 +144,7 @@ Recommended dev steps (Windows PowerShell):
 - **Validation**: Zod schemas generated from OpenAPI spec, re-exported in `schemas.ts`
 - **Proxy setup**: Vite proxies `/api` to `https://localhost:7082` with SSL verification disabled in dev
 - **Type generation**: Orval reads OpenAPI spec and generates TypeScript client code + Zod schemas
+ - Optional: Frontend can send `X-Session-Id` to enable chat history caching and per-session rate limiting
 
 ### Orval configuration
 - **Dual generation**: Two separate configurations in `orval.config.ts`
@@ -168,6 +184,7 @@ Recommended dev steps (Windows PowerShell):
   ```
 - Minimal Svelte usage (`+page.svelte`): call `sendChat({ messages })` then append `{ role: 'assistant', content: res.reply }`.
 - TODO Svelte usage (`todos/+page.svelte`): call `getTodos()` on mount, `createTodo({ title, description })`, `updateTodo(id, { isCompleted })`, `deleteTodo(id)`.
+ - Rate limiting header example: set `X-Session-Id` on fetch to scope limits to a session.
 
 ## Common development workflows
 
@@ -192,4 +209,11 @@ Note: Uses local `openapi-spec.json` file (no SSL issues). If generating from li
 $env:NODE_TLS_REJECT_UNAUTHORIZED='0'  # Disable SSL verification for self-signed cert
 pnpm generate:api
 Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
+```
+
+## Redis quickstart (dev)
+```powershell
+# In project root
+docker-compose up -d redis
+start https://localhost:7082/api/health/redis
 ```

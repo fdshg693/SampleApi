@@ -4,7 +4,7 @@
 
 ## 🎯 プロジェクト概要
 
-- **バックエンド**: ASP.NET Core Minimal API (.NET 9) - REST API、OpenAI Chat Completions 統合、インメモリTODO管理
+- **バックエンド**: ASP.NET Core Minimal API (.NET 9) - REST API、OpenAI Chat Completions 統合、Redis を用いた TODO 永続化・チャット履歴キャッシュ・レート制限
 - **フロントエンド**: SvelteKit + Vite - モダンなUIフレームワークと高速開発環境
 - **API連携**: Vite開発サーバーが `/api/*` を .NET API（HTTPS）にプロキシ
 - **型安全**: Orval を使用して OpenAPI 仕様から TypeScript クライアントと Zod スキーマを自動生成
@@ -17,7 +17,7 @@
 SampleApi/
 ├── api/              # ASP.NET Core Minimal API (.NET 9)
 │   ├── Models/       # リクエスト/レスポンスDTO
-│   ├── Services/     # ビジネスロジック（AiChatService, TodoService）
+│   ├── Services/     # ビジネスロジック（AiChatService, TodoService, ChatCacheService, RateLimitService, RedisConnectionService）
 │   ├── Validators/   # FluentValidationバリデーター
 │   ├── Properties/   # launchSettings.json（ポート設定）
 │   └── Program.cs    # エンドポイント定義とDI設定
@@ -36,7 +36,7 @@ SampleApi/
 │   │       └── todos/+page.svelte # TODO管理画面
 │   ├── orval.config.ts            # Orval設定（fetch + Zod生成）
 │   └── vite.config.ts             # Viteプロキシ設定
-├── docs/             # ドキュメント（OpenAPI, Orval, FluentValidation設定など）
+├── docs/             # ドキュメント（OpenAPI, Orval, FluentValidation, Redis運用ガイド など）
 ├── architecture/     # アーキテクチャドキュメント
 ├── feature/          # 機能仕様・実装メモ
 ├── openapi-spec.json # OpenAPI仕様書（生成済み）
@@ -50,19 +50,22 @@ SampleApi/
 
 ### 1. ヘルスチェック
 - **GET** `/api/health` - APIの稼働状態とサーバー時刻を返却
+- **GET** `/api/health/redis` - Redis への疎通確認（レイテンシを返却、失敗時は 503）
 
 ### 2. AIチャット
 - **POST** `/api/chat` - OpenAI Chat Completions API を使用したチャット機能
   - OpenAIキー設定時は実際のAI応答
   - キー未設定時はスタブ（エコー）応答
   - モデル指定可能（デフォルト: `gpt-4o-mini`）
+  - 任意ヘッダー `X-Session-Id` を付与すると、チャット履歴のキャッシュが有効化されます
+  - レート制限（デフォルト: 60 リクエスト/60秒）超過時は `429 Too Many Requests` と `Retry-After` ヘッダーを返します
 
 ### 3. TODO管理（CRUD）
 - **GET** `/api/todos` - 全TODO取得
 - **POST** `/api/todos` - 新規TODO作成
 - **PUT** `/api/todos/{id}` - TODO更新
 - **DELETE** `/api/todos/{id}` - TODO削除
-- インメモリストレージ使用（`ConcurrentDictionary`）
+- Redis ストレージ使用（キー: `SampleApi:todo:{id}`、一覧: `SampleApi:todos:all`）
 
 ## 📋 前提条件
 
@@ -71,8 +74,21 @@ SampleApi/
 - **.NET SDK**: 9.0（`dotnet --version` で確認）
 - **開発用HTTPS証明書**: 信頼済み（`dotnet dev-certs https --trust`）
 - **オプション**: OpenAI API キー（実際のAI応答を使用する場合）
+ - **Redis**: Docker + Docker Compose で `redis:7-alpine` を起動（本APIは Redis 接続が前提）
 
 ## 🔧 起動手順（ローカル開発）
+
+### 0️⃣ Redis を起動
+
+```powershell
+# プロジェクトルートで Redis コンテナを起動
+docker-compose up -d redis
+
+# ヘルス確認（healthy になればOK）
+docker ps | Select-String redis
+```
+
+詳細は `docs/redis.md` と `scripts/redis-up.ps1` を参照してください。
 
 ### 1️⃣ バックエンド（API）を起動
 
@@ -101,6 +117,7 @@ dotnet run
 - HTTP: `http://localhost:5073`
 - OpenAPI仕様: `https://localhost:7082/openapi/v1.json`（開発環境のみ）
 - Swagger UI: `https://localhost:7082/swagger`（開発環境のみ）
+- Redis ヘルス: `https://localhost:7082/api/health/redis`
 
 ### 2️⃣ フロントエンドを起動
 
@@ -173,6 +190,7 @@ Browser
 | 関数 | HTTPメソッド | エンドポイント | 説明 |
 |------|-------------|---------------|------|
 | `health()` | GET | `/api/health` | ヘルスチェック |
+| `healthRedis()` | GET | `/api/health/redis` | Redisヘルスチェック |
 | `sendChat(request)` | POST | `/api/chat` | チャット送信 |
 | `getTodos()` | GET | `/api/todos` | TODO一覧取得 |
 | `createTodo(request)` | POST | `/api/todos` | TODO作成 |
@@ -205,6 +223,14 @@ Browser
 }
 ```
 
+**GET** `/api/health/redis`
+
+```json
+// レスポンス例（成功）
+{ "status": "ok", "latencyMs": 1.23 }
+// 失敗時は 503 とエラーレスポンス
+```
+
 ### 2. チャット
 
 **POST** `/api/chat`
@@ -228,6 +254,13 @@ Browser
 **エラーハンドリング**:
 - `400 Bad Request`: `messages` が空または未指定
 - `isStub: true`: OpenAI API キー未設定または外部APIエラー時
+ - `429 Too Many Requests`: レート制限超過（`Retry-After` ヘッダー含む）。セッション単位で制限する場合は `X-Session-Id` ヘッダーを付与。
+
+**セッションヘッダー例**:
+
+```
+X-Session-Id: your-session-id
+```
 
 ### 3. TODO管理（CRUD）
 
@@ -288,7 +321,7 @@ Browser
 
 詳細は以下を参照:
 - エンドポイント定義: `api/Program.cs`
-- ビジネスロジック: `api/Services/AiChatService.cs`, `api/Services/TodoService.cs`
+- ビジネスロジック: `api/Services/AiChatService.cs`, `api/Services/TodoService.cs`, `api/Services/ChatCacheService.cs`, `api/Services/RateLimitService.cs`
 - データモデル: `api/Models/ChatModels.cs`, `api/Models/TodoModels.cs`
 
 ## ⚙️ 設定と環境変数
@@ -331,6 +364,23 @@ setx OPENAI_API_KEY "sk-..."
 | フロント ポート | 5173 | Vite デフォルト |
 | CORS 許可オリジン | `localhost:5173`, `localhost:3000` | `api/Program.cs` |
 | Vite プロキシ先 | `https://localhost:7082` | `front/vite.config.ts` |
+
+### Redis 設定
+
+`api/appsettings.Development.json` 例:
+
+```json
+{
+  "Redis": {
+    "ConnectionString": "localhost:6379,abortConnect=false",
+    "InstanceName": "SampleApi:"
+  },
+  "ChatCache": { "Hours": 24 },
+  "RateLimit": { "Chat": { "MaxRequests": 60, "WindowSeconds": 60 } }
+}
+```
+
+詳細は `docs/redis.md` を参照してください。
 
 ## 🛠️ トラブルシューティング
 
@@ -418,6 +468,16 @@ setx OPENAI_API_KEY "sk-..."
    pnpm generate:api
    Remove-Item env:NODE_TLS_REJECT_UNAUTHORIZED
    ```
+
+### 問題: Redis に接続できない/起動時に失敗する
+
+**症状**: API 起動時に Redis 接続エラーで落ちる、`/api/health/redis` が失敗する など
+
+**対処**:
+1. Redis コンテナを起動: `docker-compose up -d redis`
+2. ヘルス確認: `docker ps | Select-String redis` で `healthy` を確認
+3. ポート確認: `Test-NetConnection -ComputerName localhost -Port 6379`
+4. 詳細手順: `docs/redis.md` を参照
 
 ## 🚀 デプロイ
 
